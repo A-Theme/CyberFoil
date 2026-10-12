@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include "util/config.hpp"
 #include "util/json.hpp"
 
@@ -13,6 +15,7 @@ namespace inst::config {
     std::string lastNetUrl;
     std::string offlineDbManifestUrl;
     std::string remoteUrl;
+    std::string remoteProfileFile;
     std::string remoteUser;
     std::string remotePass;
     std::string httpUserAgentMode;
@@ -71,6 +74,35 @@ namespace inst::config {
             return normalizedProtocol == "https" ? 443 : 8465;
         }
 
+        bool IsLocalRemoteHost(std::string host)
+        {
+            const auto localIpv4 = [](std::uint32_t ip) {
+                return (ip >> 24) == 10 || (ip >> 24) == 127 || (ip >> 16) == 0xc0a8 ||
+                    (ip & 0xfff00000) == 0xac100000 || (ip >> 16) == 0xa9fe;
+            };
+            host = ToLower(Trim(host));
+            if (host == "localhost") return true;
+            in_addr ipv4{};
+            if (inet_pton(AF_INET, host.c_str(), &ipv4) == 1) {
+                return localIpv4(ntohl(ipv4.s_addr));
+            }
+            if (!host.empty() && host.front() == '[') {
+                unsigned char ip[16]{};
+                if (inet_pton(AF_INET6, host.substr(1, host.size() - 2).c_str(), ip) == 1) {
+                    bool loopback = ip[15] == 1;
+                    for (int i = 0; i < 15; ++i) loopback = loopback && ip[i] == 0;
+                    bool mapped = ip[10] == 0xff && ip[11] == 0xff;
+                    for (int i = 0; i < 10; ++i) mapped = mapped && ip[i] == 0;
+                    if (mapped) return localIpv4((std::uint32_t(ip[12]) << 24) | (std::uint32_t(ip[13]) << 16) |
+                        (std::uint32_t(ip[14]) << 8) | ip[15]);
+                    return loopback || (ip[0] & 0xfe) == 0xfc || (ip[0] == 0xfe && (ip[1] & 0xc0) == 0x80);
+                }
+                return false;
+            }
+            return host.find('.') == std::string::npos || host.ends_with(".local") ||
+                host.ends_with(".lan") || host.ends_with(".home");
+        }
+
         bool EnsureRemotesDirectory()
         {
             std::error_code ec;
@@ -81,7 +113,8 @@ namespace inst::config {
 
         std::string RemoteDedupKey(const inst::config::RemoteProfile& remote)
         {
-            return inst::config::BuildRemoteUrl(remote) + "\x1f" + Trim(remote.username) + "\x1f" + Trim(remote.password) +
+            return remote.lanUrl + "\x1f" + remote.wanUrl + "\x1f" + remote.connection + "\x1f" +
+                inst::config::BuildRemoteUrl(remote) + "\x1f" + Trim(remote.username) + "\x1f" + Trim(remote.password) +
                 "\x1f" + (remote.legacyMode ? "legacy" : "cyberfoil");
         }
 
@@ -175,7 +208,11 @@ namespace inst::config {
                     {"password", normalized.password},
                     {"title", normalized.title},
                     {"favourite", normalized.favourite},
-                    {"legacyMode", normalized.legacyMode}
+                    {"legacyMode", normalized.legacyMode},
+                    {"lanUrl", normalized.lanUrl},
+                    {"wanUrl", normalized.wanUrl},
+                    {"connection", normalized.connection},
+                    {"uid", normalized.uid}
                 }}
             };
         }
@@ -319,6 +356,11 @@ namespace inst::config {
                 parsed.username = remoteNode->value("username", "");
                 parsed.password = remoteNode->value("password", "");
                 parsed.title = remoteNode->value("title", "");
+                parsed.lanUrl = remoteNode->value("lanUrl", "");
+                parsed.wanUrl = remoteNode->value("wanUrl", "");
+                parsed.connection = remoteNode->value("connection", "auto");
+                parsed.uid = remoteNode->value("uid", "");
+                if (!remoteNode->contains("lanUrl") || !remoteNode->contains("wanUrl")) needsRewrite = true;
                 if (remoteNode->contains("legacyMode") && (*remoteNode)["legacyMode"].is_boolean())
                     parsed.legacyMode = (*remoteNode)["legacyMode"].get<bool>();
 
@@ -405,7 +447,7 @@ namespace inst::config {
 
                 if (parsed.port <= 0 || parsed.port > 65535)
                     parsed.port = DefaultPortForNormalizedProtocol(parsed.protocol);
-                if (parsed.host.empty() || parsed.title.empty())
+                if (!NormalizeRemoteProfile(parsed) || parsed.title.empty())
                     return false;
 
                 parsed.fileName = path.filename().string();
@@ -532,7 +574,8 @@ namespace inst::config {
 
             std::vector<inst::config::RemoteProfile> remotes = inst::config::LoadRemotes();
             for (const auto& remote : remotes) {
-                if (inst::config::BuildRemoteUrl(remote) == inst::config::remoteUrl &&
+                if (!remoteProfileFile.empty() && remote.fileName == remoteProfileFile) return;
+                if (inst::config::RemoteMatchesUrl(remote, inst::config::remoteUrl) &&
                     remote.username == inst::config::remoteUser &&
                     remote.password == inst::config::remotePass) {
                     return;
@@ -553,6 +596,7 @@ namespace inst::config {
             migrated.port = port;
             migrated.username = inst::config::remoteUser;
             migrated.password = inst::config::remotePass;
+            migrated.legacyMode = inst::config::remoteLegacyMode;
             migrated.title = path.empty() ? host : (host + path);
             migrated.favourite = false;
 
@@ -609,6 +653,11 @@ namespace inst::config {
 
     std::string BuildRemoteUrl(const RemoteProfile& remote)
     {
+        if (!remote.lanUrl.empty() || !remote.wanUrl.empty()) {
+            if (remote.connection == "lan") return remote.lanUrl;
+            if (remote.connection == "wan") return remote.wanUrl;
+            return remote.lanUrl.empty() ? remote.wanUrl : remote.lanUrl;
+        }
         std::string host = Trim(remote.host);
         if (host.empty())
             return "";
@@ -620,6 +669,85 @@ namespace inst::config {
             port = DefaultPortForNormalizedProtocol(protocol);
 
         return protocol + "://" + host + ":" + std::to_string(port) + path;
+    }
+
+    bool NormalizeRemoteEndpoint(const std::string& input, std::string& output)
+    {
+        const std::string url = Trim(input);
+        output.clear();
+        if (url.empty()) return true;
+        if (url.size() > 512 || (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0)) return false;
+        for (unsigned char c : url) if (c <= 32 || c == 127 || c == '\\') return false;
+        // Credentials are shared profile fields. Queries/fragments are not part
+        // of the existing Remote base URL model, so reject rather than drop them.
+        if (url.find_first_of("?#") != std::string::npos) return false;
+        std::string protocol, host, path;
+        int port = 0;
+        if (!ParseRemoteUrl(url, protocol, host, port, path)) return false;
+        const auto authorityStart = url.find("://") + 3;
+        const auto authorityEnd = url.find('/', authorityStart);
+        const std::string authority = url.substr(authorityStart, authorityEnd - authorityStart);
+        if (authority.find('@') != std::string::npos) return false;
+        const bool explicitPort = host.front() == '[' ? authority.find(']') + 1 < authority.size()
+            : authority.find(':') != std::string::npos;
+        if (!explicitPort) port = protocol == "https" ? 443 : 80;
+        if (host.front() == '[') {
+            const auto end = authority.find(']');
+            if (end == std::string::npos || (end + 1 < authority.size() && authority[end + 1] != ':')) return false;
+            unsigned char address[16];
+            if (inet_pton(AF_INET6, host.substr(1, host.size() - 2).c_str(), address) != 1) return false;
+        } else {
+            for (unsigned char c : host)
+                if (!std::isalnum(c) && c != '.' && c != '-' && c != '_' && c < 128) return false;
+        }
+        if (port < 1 || port > 65535 || authority.back() == ':') return false;
+        output = protocol + "://" + host + ":" + std::to_string(port) + NormalizeRemotePath(path);
+        return true;
+    }
+
+    bool NormalizeRemoteAddress(const std::string& input, const std::string& protocol, std::string& output)
+    {
+        output.clear();
+        if (protocol != "http" && protocol != "https") return false;
+        const std::string address = Trim(input);
+        if (address.empty()) return true;
+        const std::string prefix = protocol + "://";
+        if (address.find("://") != std::string::npos && address.rfind(prefix, 0) != 0) return false;
+        return NormalizeRemoteEndpoint(address.rfind(prefix, 0) == 0 ? address : prefix + address, output);
+    }
+
+    bool NormalizeRemoteProfile(RemoteProfile& remote, std::string* error)
+    {
+        auto fail = [&](const char* message) { if (error) *error = message; return false; };
+        if (remote.lanUrl.empty() && remote.wanUrl.empty() && !remote.host.empty()) {
+            const std::string originalUrl = BuildRemoteUrl(remote);
+            // Preserve the address while placing public HTTPS legacy servers in
+            // Remote URL. HTTPS also remains valid for private/local LAN hosts.
+            if (NormalizeProtocol(remote.protocol) == "https" && !IsLocalRemoteHost(remote.host))
+                remote.wanUrl = originalUrl;
+            else remote.lanUrl = originalUrl;
+        }
+        std::string lan, wan;
+        if (!NormalizeRemoteEndpoint(remote.lanUrl, lan)) return fail("Invalid LAN address or port.");
+        if (!NormalizeRemoteEndpoint(remote.wanUrl, wan)) return fail("Invalid Remote address or port.");
+        if (!wan.empty() && wan.rfind("https://", 0) != 0) return fail("Remote URL must use HTTPS.");
+        if (lan.empty() && wan.empty()) return fail("Enter a LAN URL or Remote URL.");
+        if (remote.connection != "auto" && remote.connection != "lan" && remote.connection != "wan") return fail("Invalid connection preference.");
+        if (remote.connection == "lan" && lan.empty()) return fail("LAN mode requires a LAN URL.");
+        if (remote.connection == "wan" && wan.empty()) return fail("WAN mode requires a Remote URL.");
+        remote.lanUrl = lan;
+        remote.wanUrl = wan;
+        const std::string preferred = BuildRemoteUrl(remote);
+        // Keep the original host/port fields populated for older readers.
+        ParseRemoteUrl(preferred, remote.protocol, remote.host, remote.port, remote.path);
+        return true;
+    }
+
+    bool RemoteMatchesUrl(const RemoteProfile& remote, const std::string& url)
+    {
+        std::string normalized;
+        if (!NormalizeRemoteEndpoint(url, normalized) || normalized.empty()) return false;
+        return normalized == BuildRemoteUrl(remote) || normalized == remote.lanUrl || normalized == remote.wanUrl;
     }
 
     std::vector<RemoteProfile> LoadRemotes()
@@ -680,8 +808,8 @@ namespace inst::config {
         if (normalized.port <= 0 || normalized.port > 65535)
             normalized.port = DefaultPortForNormalizedProtocol(normalized.protocol);
 
-        if (normalized.host.empty())
-            return fail("Host is required.");
+        std::string endpointError;
+        if (!NormalizeRemoteProfile(normalized, &endpointError)) return fail(endpointError);
         if (normalized.title.empty())
             return fail("Title is required.");
 
@@ -729,13 +857,26 @@ namespace inst::config {
 
     bool SetActiveRemote(const RemoteProfile& remote, bool writeConfig)
     {
-        std::string url = BuildRemoteUrl(remote);
+        RemoteProfile selected = remote;
+        if (!NormalizeRemoteProfile(selected)) return false;
+        std::string url = BuildRemoteUrl(selected);
         if (url.empty())
             return false;
         inst::config::remoteUrl = url;
-        inst::config::remoteUser = remote.username;
-        inst::config::remotePass = remote.password;
-        inst::config::remoteLegacyMode = remote.legacyMode;
+        inst::config::remoteProfileFile = selected.fileName;
+        if (remoteProfileFile.empty()) {
+            for (const auto& saved : LoadRemotes()) {
+                if (BuildRemoteUrl(saved) == url && saved.username == selected.username && saved.password == selected.password &&
+                    saved.connection == selected.connection && saved.lanUrl == selected.lanUrl && saved.wanUrl == selected.wanUrl &&
+                    saved.legacyMode == selected.legacyMode) {
+                    remoteProfileFile = saved.fileName;
+                    break;
+                }
+            }
+        }
+        inst::config::remoteUser = selected.username;
+        inst::config::remotePass = selected.password;
+        inst::config::remoteLegacyMode = selected.legacyMode;
         if (inst::config::remoteLegacyMode) {
             inst::config::httpUserAgentMode = "tinfoil";
             inst::config::httpUserAgent.clear();
@@ -749,6 +890,15 @@ namespace inst::config {
     }
 
     void setConfig() {
+        std::string persistedRemoteUrl = remoteUrl;
+        if (!remoteProfileFile.empty()) {
+            for (const auto& saved : LoadRemotes()) {
+                if (saved.fileName == remoteProfileFile) {
+                    persistedRemoteUrl = BuildRemoteUrl(saved);
+                    break;
+                }
+            }
+        }
         nlohmann::json j = {
             {"autoUpdate", autoUpdate},
             {"deletePrompt", deletePrompt},
@@ -764,7 +914,8 @@ namespace inst::config {
             {"validateNCAs", validateNCAs},
             {"lastNetUrl", lastNetUrl},
             {"offlineDbManifestUrl", offlineDbManifestUrl},
-            {"remoteUrl", remoteUrl},
+            {"remoteUrl", persistedRemoteUrl},
+            {"remoteProfileFile", remoteProfileFile},
             {"remoteUser", remoteUser},
             {"remotePass", remotePass},
             {"httpUserAgentMode", httpUserAgentMode},
@@ -800,6 +951,7 @@ namespace inst::config {
         lastNetUrl = "https://";
         offlineDbManifestUrl = "https://github.com/luketanti/CyberFoil-DB/releases/latest/download/offline_db_manifest.json";
         remoteUrl.clear();
+        remoteProfileFile.clear();
         remoteUser.clear();
         remotePass.clear();
         httpUserAgentMode = "default";
@@ -814,11 +966,13 @@ namespace inst::config {
         verboseInstallLogging = false;
         bool hasHttpUserAgentModeKey = false;
         bool needsConfigRewrite = false;
+        bool needsLegacyRemoteImport = false;
 
         try {
             std::ifstream file(inst::config::configPath);
             nlohmann::json j;
             file >> j;
+            needsLegacyRemoteImport = j.is_object() && !j.contains("remoteProfileFile");
             if (j.contains("autoUpdate")) autoUpdate = j["autoUpdate"].get<bool>();
             if (j.contains("deletePrompt")) deletePrompt = j["deletePrompt"].get<bool>();
             if (j.contains("gAuthKey")) gAuthKey = j["gAuthKey"].get<std::string>();
@@ -834,6 +988,7 @@ namespace inst::config {
             if (j.contains("lastNetUrl")) lastNetUrl = j["lastNetUrl"].get<std::string>();
             if (j.contains("offlineDbManifestUrl")) offlineDbManifestUrl = j["offlineDbManifestUrl"].get<std::string>();
             if (j.contains("remoteUrl")) remoteUrl = j["remoteUrl"].get<std::string>();
+            if (j.contains("remoteProfileFile")) remoteProfileFile = j["remoteProfileFile"].get<std::string>();
             if (j.contains("remoteUser")) remoteUser = j["remoteUser"].get<std::string>();
             if (j.contains("remotePass")) remotePass = j["remotePass"].get<std::string>();
             if (j.contains("httpUserAgentMode")) {
@@ -866,6 +1021,7 @@ namespace inst::config {
                 "lastNetUrl",
                 "offlineDbManifestUrl",
                 "remoteUrl",
+                "remoteProfileFile",
                 "remoteUser",
                 "remotePass",
                 "httpUserAgentMode",
@@ -888,6 +1044,7 @@ namespace inst::config {
             }
         }
         catch (...) {
+            needsLegacyRemoteImport = false;
             // If loading values from the config fails, we just load the defaults and overwrite the old config
             setConfig();
         }
@@ -915,9 +1072,19 @@ namespace inst::config {
         }
 
         EnsureRemotesDirectory();
-        TryMigrateLegacyRemoteToJson();
         MigrateLegacyRemoteFiles();
+        if (needsLegacyRemoteImport) TryMigrateLegacyRemoteToJson();
         MigrateLegacyRemoteIcons();
+        if (remoteProfileFile.empty()) {
+            for (const auto& saved : LoadRemotes()) {
+                if (RemoteMatchesUrl(saved, remoteUrl) && saved.username == remoteUser && saved.password == remotePass &&
+                    saved.legacyMode == remoteLegacyMode) {
+                    remoteProfileFile = saved.fileName;
+                    needsConfigRewrite = true;
+                    break;
+                }
+            }
+        }
         if (needsConfigRewrite)
             setConfig();
     }

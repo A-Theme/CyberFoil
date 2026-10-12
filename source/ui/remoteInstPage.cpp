@@ -15,6 +15,7 @@
 #include "ui/remoteInstPage.hpp"
 #include "ui/overflowText.hpp"
 #include "util/config.hpp"
+#include "util/remote_connection.hpp"
 #include "util/curl.hpp"
 #include "cheat_manager.hpp"
 #include "util/lang.hpp"
@@ -3808,7 +3809,56 @@ namespace inst::ui {
             inst::config::remoteUrl = remoteUrl;
             inst::config::setConfig();
         }
+        // Resolve once per profile/session, on a worker so the loading UI keeps
+        // rendering. Explicit refresh rechecks connectivity for network changes.
+        for (const auto& profile : inst::config::LoadRemotes()) {
+            if ((inst::config::remoteProfileFile.empty() ? !inst::config::RemoteMatchesUrl(profile, remoteUrl)
+                    : profile.fileName != inst::config::remoteProfileFile) ||
+                profile.username != inst::config::remoteUser || profile.password != inst::config::remotePass ||
+                profile.legacyMode != inst::config::remoteLegacyMode) continue;
+            const std::string key = profile.fileName + "\n" + profile.lanUrl + "\n" + profile.wanUrl +
+                "\n" + profile.connection + "\n" + profile.username + "\n" + profile.password +
+                (profile.legacyMode ? "\nlegacy" : "\ncyberfoil") + "\n" + inst::util::getIPAddress();
+            if (!forceRefresh && this->sessionRemoteKey == key && !this->sessionRemoteUrl.empty()) {
+                remoteUrl = this->sessionRemoteUrl;
+            } else {
+                std::atomic<bool> resolved{false};
+                std::string selected, resolveError;
+                this->setLoadingProgressStage("Choosing Remote connection...");
+                std::thread resolver([&]() {
+                    try { selected = inst::remote::ResolveEndpoint(profile); }
+                    catch (...) { resolveError = "Unable to choose a Remote connection."; }
+                    resolved.store(true, std::memory_order_release);
+                });
+                u64 lastTick = armGetSystemTick();
+                int frame = 0;
+                while (!resolved.load(std::memory_order_acquire)) {
+                    const u64 now = armGetSystemTick();
+                    if (now - lastTick >= (armGetSystemTickFreq() * 140) / 1000) {
+                        lastTick = now;
+                        static const char* frames[] = {"Choosing connection .", "Choosing connection ..", "Choosing connection ...", "Choosing connection"};
+                        this->setLoadingProgressStage(frames[frame++ % 4]);
+                    }
+                    mainApp->CallForRender();
+                    svcSleepThread(16'000'000ULL);
+                }
+                resolver.join();
+                if (!resolveError.empty() || selected.empty()) {
+                    mainApp->CreateShowDialog("Remote connection", resolveError.empty() ? "No URL configured for this connection preference." : resolveError,
+                        {"common.ok"_lang}, true);
+                    mainApp->LoadLayout(mainApp->mainPage);
+                    return;
+                }
+                remoteUrl = selected;
+                this->sessionRemoteUrl = selected;
+                this->sessionRemoteKey = key;
+            }
+            break;
+        }
         this->activeRemoteUrl = remoteUrl;
+        // Downloads scope Basic Auth to this origin. The profile's two saved
+        // endpoints and preference remain unchanged; no setConfig() here.
+        inst::config::remoteUrl = remoteUrl;
 
         std::string error;
         bool usedLegacyFallback = false;

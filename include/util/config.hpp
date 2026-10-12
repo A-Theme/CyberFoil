@@ -27,6 +27,7 @@ namespace inst::config {
     extern std::string lastNetUrl;
     extern std::string offlineDbManifestUrl;
     extern std::string remoteUrl;
+    extern std::string remoteProfileFile;
     extern std::string remoteUser;
     extern std::string remotePass;
     extern std::string httpUserAgentMode;
@@ -53,6 +54,10 @@ namespace inst::config {
     extern bool verboseInstallLogging;
 
     struct RemoteProfile {
+        std::string lanUrl;
+        std::string wanUrl;
+        std::string connection = "auto";
+        std::string uid;
         std::string fileName;
         std::string protocol;
         std::string host;
@@ -71,6 +76,10 @@ namespace inst::config {
     std::string NormalizeRemotePath(const std::string& path);
     bool ParseRemoteUrl(const std::string& rawUrl, std::string& protocol, std::string& host, int& port, std::string& path);
     std::string BuildRemoteUrl(const RemoteProfile& remote);
+    bool NormalizeRemoteEndpoint(const std::string& input, std::string& output);
+    bool NormalizeRemoteAddress(const std::string& input, const std::string& protocol, std::string& output);
+    bool NormalizeRemoteProfile(RemoteProfile& remote, std::string* error = nullptr);
+    bool RemoteMatchesUrl(const RemoteProfile& remote, const std::string& url);
     std::vector<RemoteProfile> LoadRemotes();
     bool SaveRemote(const RemoteProfile& remote, std::string* error = nullptr);
     bool DeleteRemote(const std::string& fileName);

@@ -84,6 +84,8 @@ namespace inst::ui {
     }
 
     void MainApplication::Close() {
+        if (this->optionspage)
+            this->optionspage->stopDiscoveryWorker();
         if (this->remoteinstPage)
             this->remoteinstPage->stopIconDownloadWorker();
         pu::ui::Application::Close();

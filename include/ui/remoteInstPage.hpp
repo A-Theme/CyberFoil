@@ -75,6 +75,8 @@ namespace inst::ui {
             bool suppressBottomHints = false;
             bool cheatInstallProgressVisible = false;
             std::string activeRemoteUrl;
+            std::string sessionRemoteUrl;
+            std::string sessionRemoteKey;
             bool catalogCacheValid = false;
             bool catalogCacheUsedLegacyFallback = false;
             std::string catalogCacheKey;
