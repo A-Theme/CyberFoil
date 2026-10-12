@@ -21,6 +21,7 @@ SOFTWARE.
 */
 
 #include <cstring>
+#include <algorithm>
 #include <sstream>
 #include <filesystem>
 #include <ctime>
@@ -49,8 +50,13 @@ namespace inst::ui {
 
 namespace hddInstStuff {
 
-    void installNspFromFile(std::vector<std::filesystem::path> ourTitleList, int whereToInstall)
+    void installNspFromFile(std::vector<std::filesystem::path> ourTitleList, int whereToInstall, const std::vector<std::filesystem::path>& availableTitles)
     {
+        if (ourTitleList.empty()) return;
+        if (inst::ui::mainApp->IsUiThread()) {
+            inst::ui::mainApp->RunInstallWork([=] { installNspFromFile(ourTitleList, whereToInstall, availableTitles); });
+            return;
+        }
         inst::util::initInstallServices();
         inst::ui::instPage::loadInstallScreen();
         bool nspInstalled = true;
@@ -58,8 +64,20 @@ namespace hddInstStuff {
         std::string currentName;
 
         if (whereToInstall) m_destStorageId = NcmStorageId_BuiltInUser;
-        unsigned int titleItr;
-        inst::diag::StartSession("usb-hdd", ourTitleList.size());
+        auto catalog = ourTitleList;
+        for (const auto& path : availableTitles)
+            if (std::find(catalog.begin(), catalog.end(), path) == catalog.end()) catalog.push_back(path);
+        std::vector<std::string> queueNames;
+        std::vector<size_t> selected;
+        for (size_t i = 0; i < catalog.size(); ++i) {
+            queueNames.push_back(catalog[i].filename().string());
+            if (i < ourTitleList.size()) selected.push_back(i);
+        }
+        std::vector<inst::ui::QueueEntry> queueEntries;
+        for (const auto& path : catalog) queueEntries.push_back({path.filename().string(), path.string(), "Local file", ""});
+        inst::ui::instPage::configureQueue(queueEntries, selected, [] { inst::ui::mainApp->hddinstPage->beginQueueAddMode(); });
+        ourTitleList.clear(); // Only successfully installed source files may be deleted.
+        inst::diag::StartSession("usb-hdd", selected.size());
 
         std::vector<int> previousClockValues;
         if (inst::config::overClock) {
@@ -70,17 +88,18 @@ namespace hddInstStuff {
 
         try
         {
-            for (titleItr = 0; titleItr < ourTitleList.size(); titleItr++) {
-                currentName = inst::util::shortenString(ourTitleList[titleItr].filename().string(), 40, true);
+            while (auto next = inst::ui::instPage::nextQueuedItem()) {
+                const auto currentPath = catalog[*next];
+                currentName = inst::util::shortenString(currentPath.filename().string(), 40, true);
                 inst::diag::NoteTransferReceived(currentName);
                 inst::ui::instPage::setTopInstInfoText("inst.info_page.top_info0"_lang + currentName + "inst.hdd.source_string"_lang);
                 std::unique_ptr<tin::install::Install> installTask;
 
-                if (ourTitleList[titleItr].extension() == ".xci" || ourTitleList[titleItr].extension() == ".xcz") {
-                    auto sdmcXCI = std::make_shared<tin::install::xci::SDMCXCI>(ourTitleList[titleItr]);
+                if (currentPath.extension() == ".xci" || currentPath.extension() == ".xcz") {
+                    auto sdmcXCI = std::make_shared<tin::install::xci::SDMCXCI>(currentPath);
                     installTask = std::make_unique<tin::install::xci::XCIInstallTask>(m_destStorageId, inst::config::ignoreReqVers, sdmcXCI);
                 } else {
-                    auto sdmcNSP = std::make_shared<tin::install::nsp::SDMCNSP>(ourTitleList[titleItr]);
+                    auto sdmcNSP = std::make_shared<tin::install::nsp::SDMCNSP>(currentPath);
                     installTask = std::make_unique<tin::install::nsp::NSPInstall>(m_destStorageId, inst::config::ignoreReqVers, sdmcNSP);
                 }
 
@@ -91,6 +110,8 @@ namespace hddInstStuff {
                 installTask->Prepare();
                 installTask->Begin();
                 inst::diag::RecordSuccess(currentName);
+                ourTitleList.push_back(currentPath);
+                inst::ui::instPage::finishQueuedItem();
 
                 const u64 titleId = installTask->GetTitleId(0);
                 const NcmContentMetaType metaType = installTask->GetContentMetaType(0);
@@ -100,6 +121,7 @@ namespace hddInstStuff {
         }
         catch (std::exception& e)
         {
+            inst::ui::instPage::finishInstall();
             LOG_DEBUG("Failed to install");
             LOG_DEBUG("%s", e.what());
             fprintf(stdout, "%s", e.what());
@@ -122,6 +144,8 @@ namespace hddInstStuff {
             }
             nspInstalled = false;
         }
+
+        inst::ui::instPage::finishInstall();
 
         if (previousClockValues.size() > 0) {
             inst::util::setClockSpeed(0, previousClockValues[0]);

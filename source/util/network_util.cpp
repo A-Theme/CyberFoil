@@ -748,6 +748,7 @@ namespace tin::network
         while ((((ret = recv(sockfd, (u8*)buf + read, len - read, 0)) > 0 && (read += ret) < len) || errno == EAGAIN))
         {
             errno = 0;
+            if (!inst::ui::mainApp->IsUiThread() && inst::ui::instPage::isInstallCancelRequested()) break;
             inst::ui::mainApp->RefreshInputDevice();
             const u64 now = armGetSystemTick();
             if (now - lastRenderTick >= renderInterval) {
@@ -766,11 +767,13 @@ namespace tin::network
 
         while (written < len)
         {
-            inst::ui::mainApp->RefreshInputDevice();
-            inst::ui::mainApp->UpdateButtons();
-            u64 kDown = inst::ui::mainApp->GetButtonsDown();
-            if (kDown & HidNpadButton_B)
+            if (inst::ui::mainApp->IsUiThread()) {
+                inst::ui::mainApp->RefreshInputDevice();
+                inst::ui::mainApp->UpdateButtons();
+                if (inst::ui::mainApp->GetButtonsDown() & HidNpadButton_B) break;
+            } else if (inst::ui::instPage::isInstallCancelRequested()) {
                 break;
+            }
 
             errno = 0;
             ret = send(sockfd, (u8*)buf + written, len - written, 0);

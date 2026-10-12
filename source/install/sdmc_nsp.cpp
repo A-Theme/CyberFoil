@@ -49,6 +49,7 @@ namespace tin::install::nsp
             double emaRate = 0.0;
             while (fileOff < ncaSize)
             {
+                if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
                 progress = (float) fileOff / (float) ncaSize;
 
                 if (fileOff % (0x400000 * 3) == 0) {
@@ -100,8 +101,7 @@ namespace tin::install::nsp
                         speedText = "-- MB/s";
                     }
 
-                    const int pct = static_cast<int>(progress * 100.0 + 0.5);
-                    std::string progressText = std::to_string(pct) + "% • " + etaText + " • " + speedText;
+                    std::string progressText = speedText + " • " + etaText;
                     inst::ui::instPage::setProgressDetailText(progressText);
                 }
 
@@ -113,19 +113,21 @@ namespace tin::install::nsp
                 fileOff += readSize;
             }
             inst::ui::instPage::setInstBarPerc(100);
-            inst::ui::instPage::setProgressDetailText("100% • done");
+            inst::ui::instPage::setProgressDetailText("Done");
         }
         catch (std::exception& e)
         {
             LOG_DEBUG("something went wrong: %s\n", e.what());
+            throw;
         }
 
+        if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
         writer.close();
     }
 
     void SDMCNSP::BufferData(void* buf, off_t offset, size_t size)
     {
-        fseeko(m_nspFile, offset, SEEK_SET);
-        fread(buf, 1, size, m_nspFile);
+        if (fseeko(m_nspFile, offset, SEEK_SET) != 0 || fread(buf, 1, size, m_nspFile) != size)
+            THROW_FORMAT("Failed to read installation source.");
     }
 }

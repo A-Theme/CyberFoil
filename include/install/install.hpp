@@ -48,6 +48,15 @@ namespace tin::install
 
             std::vector<nx::ncm::ContentMeta> m_contentMeta;
             std::vector<NcmContentId> m_sessionInstalledNcas;
+            std::vector<tin::data::ByteBuffer> m_pendingContentMeta;
+            struct MetaBackup {
+                NcmContentMetaKey key;
+                bool existed;
+                std::vector<u8> data;
+            };
+            std::vector<MetaBackup> m_metaBackups;
+            bool m_committed = false;
+            void RollbackContentMeta() noexcept;
 
             Install(NcmStorageId destStorageId, bool ignoreReqFirmVersion);
 

@@ -83,7 +83,58 @@ namespace inst::ui {
         return FormatOneDecimal(mib) + " MiB";
     }
 
+    bool MainApplication::CallForRender() {
+        // The install pump owns the frame cadence. Progress producers must
+        // neither render from workers nor recursively poll input from callbacks.
+        if (!IsUiThread() || IsInstallWorkActive()) return true;
+        return pu::ui::Application::CallForRender();
+    }
+
+    int MainApplication::CreateShowDialog(const std::string& title, const std::string& content,
+        std::vector<std::string> options, bool useLastOptionAsCancel, const std::string& icon) {
+        return RunOnUiThread([=, this] {
+            return pu::ui::Application::CreateShowDialog(title, content, options, useLastOptionAsCancel, icon);
+        });
+    }
+
+    void MainApplication::RunInstallWork(std::function<void()> work) {
+        if (!IsUiThread()) throw std::logic_error("Install pump must start on the UI thread");
+        if (installWorkActive.exchange(true)) return;
+        instPage::loadInstallScreen(false);
+        std::atomic<bool> done{false};
+        std::exception_ptr failure;
+        std::thread worker;
+        try {
+            worker = std::thread([&] {
+                try { work(); }
+                catch (...) { failure = std::current_exception(); }
+                done.store(true, std::memory_order_release);
+            });
+        } catch (...) {
+            installWorkActive = false;
+            instPage::loadMainMenu();
+            throw;
+        }
+        // Rendering polls input every frame even while the worker waits for
+        // HTTP headers, reads local content, writes NCAs, or rolls back a cancel.
+        while (!done.load(std::memory_order_acquire))
+            pu::ui::Application::CallForRender();
+        worker.join();
+        uiDispatcher.drain();
+        installWorkActive = false;
+        instPage::loadMainMenu();
+        if (failure) {
+            try { std::rethrow_exception(failure); }
+            catch (const std::exception& e) { CreateShowDialog("Installation failed", e.what(), {"OK"}, true); }
+            catch (...) { CreateShowDialog("Installation failed", "Unexpected installation error.", {"OK"}, true); }
+        }
+    }
+
     void MainApplication::Close() {
+        if (IsInstallWorkActive()) {
+            instPage::requestInstallCancel();
+            return; // Renderer and services must outlive the installation worker.
+        }
         if (this->optionspage)
             this->optionspage->stopDiscoveryWorker();
         if (this->remoteinstPage)
@@ -92,6 +143,7 @@ namespace inst::ui {
     }
 
     void MainApplication::RefreshInputDevice(bool force) {
+        if (!IsUiThread()) return;
         const AppletFocusState focus = appletGetFocusState();
         const bool regainedFocus = (focus != this->lastFocusState) && (focus == AppletFocusState_InFocus);
         this->lastFocusState = focus;
@@ -130,6 +182,7 @@ namespace inst::ui {
         this->LoadLayout(this->mainPage);
 
         this->AddThread([this]() {
+            this->uiDispatcher.drain();
             this->RefreshInputDevice();
         });
 
@@ -169,6 +222,7 @@ namespace inst::ui {
             }
 
             if (active && !last_active) {
+                instPage::loadInstallScreen(false);
                 last_name = inst::mtp::GetStreamInstallName();
                 if (last_name.empty()) {
                     last_name = "MTP Install";
@@ -300,7 +354,9 @@ namespace inst::ui {
                 }
             }
 
+            if (!active && last_active) instPage::finishInstall();
             if (inst::mtp::ConsumeStreamInstallComplete()) {
+                instPage::finishInstall();
                 this->instpage->installBar->SetVisible(true);
                 this->instpage->installBar->SetProgress(100);
                 const std::string done_msg = last_name + "inst.info_page.desc1"_lang + "\n\n" + "inst.info_page.complete"_lang + "\n\n" + "inst.mtp.waiting.hint"_lang;

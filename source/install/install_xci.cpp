@@ -61,7 +61,7 @@ namespace tin::install::xci
             LOG_DEBUG("CNMT Name: %s\n", cnmtNcaName.c_str());
 
             // We install the cnmt nca early to read from it later
-            this->InstallNCA(cnmtContentId);
+            if (!contentStorage.Has(cnmtContentId)) this->InstallNCA(cnmtContentId);
             std::string cnmtNCAFullPath = contentStorage.GetPath(cnmtContentId);
 
             NcmContentInfo cnmtContentInfo;
@@ -82,6 +82,11 @@ namespace tin::install::xci
         LOG_DEBUG("Installing %s to storage Id %u\n", ncaFileName.c_str(), m_destStorageId);
 
         std::shared_ptr<nx::ncm::ContentStorage> contentStorage(new nx::ncm::ContentStorage(m_destStorageId));
+
+        if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
+        if (contentStorage->Has(ncaId)) return;
+        // Track before streaming so unwind also cleans up early CNMT installs.
+        TrackSessionInstalledNca(ncaId);
 
         // Attempt to delete any leftover placeholders
         try {
@@ -128,6 +133,7 @@ namespace tin::install::xci
 
             // Clean up the line for whatever comes next
             LOG_DEBUG("                                                           \r");
+            if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
             LOG_DEBUG("Registering placeholder...\n");
 
             try
@@ -136,7 +142,7 @@ namespace tin::install::xci
             }
             catch (...)
             {
-                LOG_DEBUG(("Failed to register " + ncaFileName + ". It may already exist.\n").c_str());
+                throw;
             }
 
             try

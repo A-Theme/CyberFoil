@@ -1175,6 +1175,16 @@ namespace inst::ui {
         this->imageLoadingText->SetVisible(false);
     }
 
+    void remoteInstPage::queueInstallIcon(const std::string& key, const std::string& iconUrl, const std::string& filePath) {
+        if (iconUrl.empty() || filePath.empty()) return;
+        std::error_code error;
+        std::filesystem::create_directories(std::filesystem::path(filePath).parent_path(), error);
+        if (error) return;
+        remoteInstStuff::RemoteItem item{};
+        item.url = key; item.iconUrl = iconUrl; item.hasIconUrl = true;
+        queueIconDownload(item, filePath);
+    }
+
     void remoteInstPage::queueIconDownload(const remoteInstStuff::RemoteItem& item, const std::string& filePath) {
         if (!item.hasIconUrl || item.iconUrl.empty() || filePath.empty())
             return;
@@ -1344,6 +1354,7 @@ namespace inst::ui {
             return empty;
         if (this->selectedSectionIndex < 0 || this->selectedSectionIndex >= (int)this->remoteSections.size())
             return empty;
+        if (queueAddMode && !isQueueSection(selectedSectionIndex)) return empty;
         return this->remoteSections[this->selectedSectionIndex].items;
     }
 
@@ -1419,7 +1430,7 @@ namespace inst::ui {
             return;
         }
         const auto& section = this->remoteSections[this->selectedSectionIndex];
-        this->pageInfoText->SetText(section.title);
+        this->pageInfoText->SetText(queueAddMode ? "Add to queue  •  " + section.title : section.title);
         this->pageInfoText->SetY(81);
         CenterTextX(this->pageInfoText);
         std::string rightInfo;
@@ -1994,6 +2005,10 @@ namespace inst::ui {
     }
 
     void remoteInstPage::updateButtonsText() {
+        if (queueAddMode) {
+            this->setButtonsText(" Select     Add to queue     Queue    / Sections     Search     View");
+            return;
+        }
         if (this->saveVersionSelectorVisible) {
             if (this->saveVersionSelectorDeleteMode)
                 this->setButtonsText(" Delete Backup    / Select Version     Back");
@@ -3685,6 +3700,7 @@ namespace inst::ui {
         const auto& item = this->visibleItems[selectedIndex];
         if (item.url.empty())
             return;
+        if (queueAddMode && !instPage::canEnqueueTitle(item.url)) return;
         auto selected = std::find_if(this->selectedItems.begin(), this->selectedItems.end(), [&](const auto& entry) {
             return entry.url == item.url;
         });
@@ -4221,7 +4237,57 @@ namespace inst::ui {
         mainApp->CallForRender();
     }
 
+    bool remoteInstPage::isQueueSection(int index) const {
+        if (index < 0 || index >= static_cast<int>(remoteSections.size())) return false;
+        const auto& section = remoteSections[index];
+        if (section.id == "installed" || section.id == "saves" || section.id == "save" || section.id == "cheats" || section.id == "cheat") return false;
+        return std::any_of(section.items.begin(), section.items.end(), [](const auto& item) {
+            return !item.url.empty() && !item.isCheat && item.saveId.empty();
+        });
+    }
+
+    std::vector<remoteInstStuff::RemoteItem> remoteInstPage::getQueueCatalog() const {
+        std::vector<remoteInstStuff::RemoteItem> items;
+        std::unordered_set<std::string> seen;
+        for (size_t i = 0; i < remoteSections.size(); ++i) {
+            if (!isQueueSection(static_cast<int>(i))) continue;
+            for (const auto& item : remoteSections[i].items)
+                if (!item.url.empty() && !item.isCheat && item.saveId.empty() && seen.insert(item.url).second) items.push_back(item);
+        }
+        return items;
+    }
+
+    void remoteInstPage::beginQueueAddMode() {
+        if (queueAddMode) return;
+        queueSavedSelection = selectedItems; selectedItems.clear(); queueAddMode = true;
+        pendingMotdFetch = false; touchActive = false; bottomHintTouch = {};
+        closeDescriptionOverlay();
+        if (!isQueueSection(selectedSectionIndex)) {
+            for (size_t i = 0; i < remoteSections.size(); ++i)
+                if (isQueueSection(static_cast<int>(i))) { selectedSectionIndex = static_cast<int>(i); break; }
+            searchQuery.clear(); remoteGridIndex = 0; remoteGridPage = -1;
+        }
+        updateSectionText(); updateButtonsText(); drawMenuItems(false);
+        mainApp->LoadLayout(mainApp->remoteinstPage);
+    }
+
+    void remoteInstPage::endQueueAddMode() {
+        if (!queueAddMode) return;
+        queueAddMode = false; selectedItems = std::move(queueSavedSelection);
+        closeDescriptionOverlay();
+        touchActive = false; bottomHintTouch = {};
+        updateSectionText(); updateButtonsText();
+    }
+
     void remoteInstPage::startInstall() {
+        if (queueAddMode) {
+            std::vector<std::string> keys;
+            for (const auto& item : selectedItems) keys.push_back(item.url);
+            instPage::enqueueTitles(keys);
+            selectedItems.clear();
+            instPage::showQueue();
+            return;
+        }
         std::vector<remoteInstStuff::RemoteItem> autoAddedItems;
         if (!this->selectedItems.empty()) {
             auto isAlreadySelected = [&](const remoteInstStuff::RemoteItem& candidate) {
@@ -4382,7 +4448,7 @@ namespace inst::ui {
         }
 
         this->updateRememberedSelection();
-        remoteInstStuff::installTitleRemote(this->selectedItems, dialogResult, "inst.remote.source_string"_lang);
+        remoteInstStuff::installTitleRemote(this->selectedItems, dialogResult, "inst.remote.source_string"_lang, getQueueCatalog());
         this->refreshAfterInstall();
     }
 
@@ -4416,6 +4482,38 @@ namespace inst::ui {
         }
         if (this->handleSaveVersionSelectorInput(Down, Up, Held, Pos))
             return;
+        if (queueAddMode) {
+            if (Down & HidNpadButton_B) { instPage::showQueue(); return; }
+            if (Down & HidNpadButton_Plus) {
+                if (selectedItems.empty()) selectTitle(remoteGridMode ? remoteGridIndex : menu->GetSelectedIndex());
+                if (!selectedItems.empty()) startInstall();
+                return;
+            }
+            if (Down & (HidNpadButton_L | HidNpadButton_R)) {
+                const int step = Down & HidNpadButton_R ? 1 : -1;
+                for (size_t tries = 0; tries < remoteSections.size(); ++tries) {
+                    selectedSectionIndex = (selectedSectionIndex + step + static_cast<int>(remoteSections.size())) % static_cast<int>(remoteSections.size());
+                    if (isQueueSection(selectedSectionIndex)) break;
+                }
+                searchQuery.clear(); gridSelectedIndex = 0; gridPage = -1; remoteGridIndex = 0; remoteGridPage = -1;
+                updateSectionText(); updateButtonsText(); drawMenuItems(false);
+                Down &= ~(HidNpadButton_L | HidNpadButton_R);
+            }
+            if (Down & HidNpadButton_Y) {
+                std::unordered_set<std::string> selectedUrls;
+                for (const auto& item : selectedItems) selectedUrls.insert(item.url);
+                const bool allSelected = std::all_of(visibleItems.begin(), visibleItems.end(), [&](const auto& item) {
+                    return !instPage::canEnqueueTitle(item.url) || selectedUrls.count(item.url) != 0;
+                });
+                if (allSelected) selectedItems.clear();
+                else for (const auto& item : visibleItems)
+                    if (instPage::canEnqueueTitle(item.url) && selectedUrls.insert(item.url).second) selectedItems.push_back(item);
+                drawMenuItems(false);
+                Down &= ~HidNpadButton_Y;
+            }
+            // Keep the session's source, credentials and catalogue stable.
+            Down &= ~HidNpadButton_X;
+        }
         if (this->pendingMotdFetch && Down == 0 && Up == 0 && Held == 0 && Pos.IsEmpty()) {
             this->pendingMotdFetch = false;
             std::string motd = remoteInstStuff::FetchRemoteMotd(this->activeRemoteUrl, inst::config::remoteUser, inst::config::remotePass);

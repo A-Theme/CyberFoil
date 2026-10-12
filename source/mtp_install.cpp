@@ -117,6 +117,7 @@ public:
 class MtpNspStream final : public StreamInstaller {
 public:
     explicit MtpNspStream(std::uint64_t total_size, NcmStorageId dest_storage);
+    ~MtpNspStream() override;
 
     bool Feed(const void* buf, size_t size, std::uint64_t offset) override;
     bool Finalize() override;
@@ -167,22 +168,19 @@ public:
         m_cnmt_infos.push_back(info);
     }
 
-    void CommitLatest() {
-        if (m_contentMeta.empty()) return;
-        const size_t idx = m_contentMeta.size() - 1;
-        tin::data::ByteBuffer install_buf;
-        m_contentMeta[idx].GetInstallContentMeta(install_buf, m_cnmt_infos[idx], m_ignoreReqFirmVersion);
-        InstallContentMetaRecords(install_buf, idx);
-        InstallApplicationRecord(idx);
-    }
+    void TrackNca(const NcmContentId& id) { TrackSessionInstalledNca(id); }
 
     void CommitAll() {
+        if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
         for (size_t i = 0; i < m_contentMeta.size(); i++) {
             tin::data::ByteBuffer install_buf;
             m_contentMeta[i].GetInstallContentMeta(install_buf, m_cnmt_infos[i], m_ignoreReqFirmVersion);
             InstallContentMetaRecords(install_buf, i);
-            InstallApplicationRecord(i);
         }
+        for (size_t i = 0; i < m_contentMeta.size(); ++i) InstallApplicationRecord(i);
+        m_committed = true;
+        m_metaBackups.clear();
+        m_sessionInstalledNcas.clear();
     }
 
 private:
@@ -192,6 +190,11 @@ private:
     void InstallTicketCert() override {}
     void InstallNCA(const NcmContentId& /*ncaId*/) override {}
 };
+
+MtpNspStream::~MtpNspStream() {
+    m_entries.clear(); // Writers close before the helper removes placeholders.
+    m_helper.reset();
+}
 
 bool IsXciName(const std::string& name) {
     auto pos = name.find_last_of('.');
@@ -275,6 +278,11 @@ bool MtpNspStream::EnsureEntryStarted(EntryState& entry)
     }
 
     entry.storage = std::make_shared<nx::ncm::ContentStorage>(m_dest_storage);
+    if (entry.storage->Has(entry.nca_id)) {
+        entry.started = true;
+        return true;
+    }
+    m_helper->TrackNca(entry.nca_id);
     try {
         entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id);
     } catch (...) {}
@@ -304,7 +312,7 @@ bool MtpNspStream::CommitCnmt(EntryState& entry)
         ncmU64ToContentInfoSize(entry.size & 0xFFFFFFFFFFFF, &cnmt_info);
         cnmt_info.content_type = NcmContentType_Meta;
         m_helper->AddContentMeta(meta, cnmt_info);
-        m_helper->CommitLatest();
+
         StreamTrace("NSP CommitCnmt ok name='%s' size=%llu",
             entry.name.c_str(),
             static_cast<unsigned long long>(entry.size));
@@ -363,18 +371,19 @@ bool MtpNspStream::WriteEntryData(EntryState& entry, const std::uint8_t* data, s
         return true;
     }
 
-    if (!entry.nca_writer) return false;
-    entry.nca_writer->write(data, size);
+    if (entry.nca_writer) entry.nca_writer->write(data, size);
     entry.written += size;
     if (entry.written >= entry.size) {
-        entry.nca_writer->close();
-        try {
-            entry.storage->Register(*(NcmPlaceHolderId*)&entry.nca_id, entry.nca_id);
-            entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id);
-        } catch (...) {}
+        if (entry.nca_writer) {
+            entry.nca_writer->close();
+            try {
+                entry.storage->Register(*(NcmPlaceHolderId*)&entry.nca_id, entry.nca_id);
+            } catch (...) { return false; }
+            try { entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id); } catch (...) {}
+        }
         entry.complete = true;
         if (entry.is_cnmt) {
-            CommitCnmt(entry);
+            if (!CommitCnmt(entry)) return false;
         }
         StreamTrace("NSP EntryComplete name='%s' size=%llu",
             entry.name.c_str(),
@@ -468,6 +477,8 @@ bool MtpNspStream::Feed(const void* buf, size_t size, std::uint64_t offset)
 
 bool MtpNspStream::Finalize()
 {
+    if (inst::ui::instPage::isInstallCancelRequested()) return false;
+    for (const auto& entry : m_entries) if (!entry.complete) return false;
     if (!m_helper) return true;
     StreamTrace("NSP Finalize begin entries=%zu", m_entries.size());
     bool ok = true;
@@ -739,7 +750,10 @@ public:
             static_cast<unsigned>(dest_storage));
         m_thread = std::thread([this]() {
             MtpStreamSource source(m_buffer);
-            const bool ok = InstallFromSource(source);
+            bool ok = false;
+            try { ok = InstallFromSource(source); }
+            catch (const std::exception& e) { LOG_DEBUG("MTP XCI install failed: %s\n", e.what()); }
+            catch (...) { LOG_DEBUG("MTP XCI install failed.\n"); }
             m_ok.store(ok, std::memory_order_relaxed);
             m_done.store(true, std::memory_order_relaxed);
             StreamTrace("XCI worker done ok=%d received=%llu buffered=%zu",
@@ -820,6 +834,11 @@ private:
         }
 
         entry.storage = std::make_shared<nx::ncm::ContentStorage>(m_dest_storage);
+    if (entry.storage->Has(entry.nca_id)) {
+        entry.started = true;
+        return true;
+    }
+    m_helper->TrackNca(entry.nca_id);
         try {
             entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id);
         } catch (...) {}
@@ -844,7 +863,7 @@ private:
             ncmU64ToContentInfoSize(entry.size & 0xFFFFFFFFFFFF, &cnmt_info);
             cnmt_info.content_type = NcmContentType_Meta;
             m_helper->AddContentMeta(meta, cnmt_info);
-            m_helper->CommitLatest();
+    
             return true;
         } catch (...) {
             return false;
@@ -869,18 +888,20 @@ private:
             return true;
         }
 
-        if (!entry.is_nca || !entry.nca_writer) return false;
-        entry.nca_writer->write(data, size);
+        if (!entry.is_nca) { entry.written += size; entry.complete = entry.written >= entry.size; return true; }
+        if (entry.nca_writer) entry.nca_writer->write(data, size);
         entry.written += size;
         if (entry.written >= entry.size) {
-            entry.nca_writer->close();
-            try {
-                entry.storage->Register(*(NcmPlaceHolderId*)&entry.nca_id, entry.nca_id);
-                entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id);
-            } catch (...) {}
+            if (entry.nca_writer) {
+                entry.nca_writer->close();
+                try {
+                    entry.storage->Register(*(NcmPlaceHolderId*)&entry.nca_id, entry.nca_id);
+                } catch (...) { return false; }
+                try { entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id); } catch (...) {}
+            }
             entry.complete = true;
             if (entry.is_cnmt) {
-                CommitCnmt(entry);
+                if (!CommitCnmt(entry)) return false;
             }
         }
         return true;
@@ -903,6 +924,7 @@ private:
         std::vector<std::uint8_t> buf(0x400000);
 
         for (const auto& collection : collections) {
+            if (inst::ui::instPage::isInstallCancelRequested()) return false;
             EntryState entry;
             entry.name = collection.name;
             entry.size = collection.size;
@@ -924,6 +946,7 @@ private:
                 static_cast<unsigned long long>(collection.offset),
                 static_cast<unsigned long long>(collection.size));
             while (remaining > 0) {
+                if (inst::ui::instPage::isInstallCancelRequested()) return false;
                 const auto chunk = static_cast<size_t>(std::min<u64>(remaining, buf.size()));
                 u64 bytes_read = 0;
                 if (R_FAILED(source.Read(buf.data(), static_cast<s64>(offset), static_cast<s64>(chunk), &bytes_read))) {
@@ -1105,6 +1128,7 @@ void CloseStreamInstall()
     }
     g_stream_active.store(false, std::memory_order_relaxed);
     g_stream_complete.store(ok, std::memory_order_relaxed);
+    stream.reset();
     inst::util::deinitInstallServices();
     StreamTrace("Close end ok=%d dt_ms=%llu", ok ? 1 : 0, static_cast<unsigned long long>(dt_ms));
 }

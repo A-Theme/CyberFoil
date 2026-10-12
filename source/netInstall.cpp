@@ -137,6 +137,11 @@ namespace netInstStuff{
 
     void installTitleNet(std::vector<std::string> ourUrlList, int ourStorage, std::vector<std::string> urlListAltNames, std::string ourSource)
     {
+        if (ourUrlList.empty()) return;
+        if (inst::ui::mainApp->IsUiThread()) {
+            inst::ui::mainApp->RunInstallWork([=] { installTitleNet(ourUrlList, ourStorage, urlListAltNames, ourSource); });
+            return;
+        }
         inst::util::initInstallServices();
         inst::ui::instPage::loadInstallScreen();
         bool nspInstalled = true;
@@ -144,7 +149,7 @@ namespace netInstStuff{
         std::string currentName;
 
         if (ourStorage) m_destStorageId = NcmStorageId_BuiltInUser;
-        unsigned int urlItr;
+        size_t completedCount = 0;
         inst::diag::StartSession("network", ourUrlList.size());
 
         std::vector<std::string> urlNames;
@@ -158,6 +163,10 @@ namespace netInstStuff{
             }
         }
 
+        std::vector<size_t> selected;
+        for (size_t i = 0; i < ourUrlList.size(); ++i) selected.push_back(i);
+        inst::ui::instPage::configureQueue(urlNames, selected);
+
         std::vector<int> previousClockValues;
         if (inst::config::overClock) {
             previousClockValues.push_back(inst::util::setClockSpeed(0, 1785000000)[0]);
@@ -166,7 +175,8 @@ namespace netInstStuff{
         }
 
         try {
-            for (urlItr = 0; urlItr < ourUrlList.size(); urlItr++) {
+            while (auto next = inst::ui::instPage::nextQueuedItem()) {
+                const size_t urlItr = *next;
                 LOG_DEBUG("%s %s\n", "Install request from", ourUrlList[urlItr].c_str());
                 currentName = urlNames[urlItr];
                 inst::diag::NoteTransferReceived(currentName);
@@ -188,10 +198,13 @@ namespace netInstStuff{
                 installTask->Prepare();
                 installTask->Begin();
                 inst::diag::RecordSuccess(currentName);
+                ++completedCount;
+                inst::ui::instPage::finishQueuedItem();
                 inst::ui::instPage::setInstInfoText("Install succeeded: " + currentName);
             }
         }
         catch (std::exception& e) {
+            inst::ui::instPage::finishInstall();
             LOG_DEBUG("Failed to install");
             LOG_DEBUG("%s", e.what());
             fprintf(stdout, "%s", e.what());
@@ -218,6 +231,8 @@ namespace netInstStuff{
             nspInstalled = false;
         }
 
+        inst::ui::instPage::finishInstall();
+
         if (previousClockValues.size() > 0) {
             inst::util::setClockSpeed(0, previousClockValues[0]);
             inst::util::setClockSpeed(1, previousClockValues[1]);
@@ -234,8 +249,8 @@ namespace netInstStuff{
             if (!inst::config::soundEnabled) audioPath = "";
             if (std::filesystem::exists(inst::config::appDir + "/success.wav")) audioPath = inst::config::appDir + "/success.wav";
             std::thread audioThread(inst::util::playAudio,audioPath);
-            if (ourUrlList.size() > 1) inst::ui::mainApp->CreateShowDialog(std::to_string(ourUrlList.size()) + "inst.info_page.desc0"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
-            else inst::ui::mainApp->CreateShowDialog(urlNames[0] + "inst.info_page.desc1"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
+            if (completedCount > 1) inst::ui::mainApp->CreateShowDialog(std::to_string(completedCount) + "inst.info_page.desc0"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
+            else inst::ui::mainApp->CreateShowDialog(currentName + "inst.info_page.desc1"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
             audioThread.join();
         }
         

@@ -39,6 +39,15 @@
 - Preset/custom modes are applied across network requests (downloads, Remote, and save sync).
 - `httpUserAgent` is used when `httpUserAgentMode` is `custom`.
 
+## Installation controls
+
+- **B** immediately requests cancellation of the active title and stops the remaining batch. The screen stays responsive while rollback finishes. New content and placeholders from that title are removed; previously installed content and completed titles are retained. Title records are published after content transfer completes.
+- **X** blanks the screen and turns off the handheld backlight while installation continues. Any button or touch wakes the screen; the wake gesture does not activate a control. The screen also wakes when the batch finishes or fails.
+- The installation screen shows an active-title card and six numbered pending rows with cached artwork, type/size details, a selection highlight, and waiting/completed counts. **Up/Down** selects a row, **Left/Right** pages six rows, and a touch selects a row. **A** removes the selected pending title.
+- **Y Add titles** opens the normal shop browser during Remote installation. Search, sections, list/grid view, and multi-selection remain available. Select titles with **A**, then press **+ Add to queue** to append them to the existing storage target and return to the queue; **B Queue** returns without adding. Active, queued, and completed titles cannot be added twice. The session stays open if the queue drains while choosing more titles. SD/USB drive installs return to the current folder's file browser. PC USB/network batches remain limited to the supplied batch; MTP transfers remain host-controlled.
+- Batch installs run on a worker while the UI polls input and renders independently of transfer progress. Holding a direction repeats queue navigation. Progress updates are coalesced; all dialogs and texture changes execute on the UI thread.
+- Queue and UI-dispatch regression tests are in `tests/install_queue_tests.cpp` and `tests/ui_dispatcher_tests.cpp` and run with `make -C tests test` on a POSIX host. Device checks should cover short button taps and held navigation during slow HTTP requests and local writes, canceling an NSP/XCI midway, preserving existing content, editing the queue during transfer, and waking the screen without canceling.
+
 ## Release Package Layout
 - Build output: `cyberfoil.nro`
 - SD layout in release zip: `switch/CyberFoil/cyberfoil.nro`

@@ -141,6 +141,7 @@ namespace inst::ui {
     }
 
     void sdInstPage::followDirectory() {
+        if (queueAddMode) return;
         int selectedIndex = this->menu->GetSelectedIndex();
         int dirListSize = this->ourDirectories.size();
         if (this->currentDir != "sdmc:/") {
@@ -158,6 +159,10 @@ namespace inst::ui {
     }
 
     void sdInstPage::selectNsp(int selectedIndex) {
+        if (queueAddMode) {
+            int fileIndex = selectedIndex - static_cast<int>(ourDirectories.size()) - (currentDir != "sdmc:/" ? 1 : 0);
+            if (fileIndex < 0 || fileIndex >= static_cast<int>(ourFiles.size()) || !instPage::canEnqueueTitle(ourFiles[fileIndex].string())) return;
+        }
         int dirListSize = this->ourDirectories.size();
         if (this->currentDir != "sdmc:/") dirListSize++;
         if (this->menu->GetItems()[selectedIndex]->GetIcon() == "romfs:/images/icons/check-box-outline.png") {
@@ -172,13 +177,36 @@ namespace inst::ui {
         this->drawMenuItems(false, currentDir);
     }
 
+    void sdInstPage::beginQueueAddMode() {
+        queueSavedSelection = selectedTitles; selectedTitles.clear(); queueAddMode = true;
+        touchTapActive = false; hasLastTap = false; bottomHintTouch = {};
+        drawMenuItems(false, currentDir);
+        butText->SetText(" Select     Add to queue     Queue");
+        bottomHintSegments = BuildBottomHintSegments(butText->GetText(), 10, 20);
+        mainApp->LoadLayout(mainApp->sdinstPage);
+    }
+
+    void sdInstPage::endQueueAddMode() {
+        if (!queueAddMode) return;
+        queueAddMode = false; selectedTitles = std::move(queueSavedSelection);
+        touchTapActive = false; hasLastTap = false; bottomHintTouch = {};
+        butText->SetText("inst.sd.buttons"_lang);
+        bottomHintSegments = BuildBottomHintSegments(butText->GetText(), 10, 20);
+    }
+
     void sdInstPage::startInstall() {
+        if (queueAddMode) {
+            std::vector<std::string> keys;
+            for (const auto& path : selectedTitles) keys.push_back(path.string());
+            instPage::enqueueTitles(keys);
+            selectedTitles.clear(); instPage::showQueue(); return;
+        }
         int dialogResult = -1;
         if (this->selectedTitles.size() == 1) {
             dialogResult = mainApp->CreateShowDialog("inst.target.desc0"_lang + inst::util::shortenString(std::filesystem::path(this->selectedTitles[0]).filename().string(), 32, true) + "inst.target.desc1"_lang, "common.cancel_desc"_lang, {"inst.target.opt0"_lang, "inst.target.opt1"_lang}, false);
         } else dialogResult = mainApp->CreateShowDialog("inst.target.desc00"_lang + std::to_string(this->selectedTitles.size()) + "inst.target.desc01"_lang, "common.cancel_desc"_lang, {"inst.target.opt0"_lang, "inst.target.opt1"_lang}, false);
         if (dialogResult == -1) return;
-        nspInstStuff::installNspFromFile(this->selectedTitles, dialogResult);
+        nspInstStuff::installNspFromFile(this->selectedTitles, dialogResult, this->ourFiles);
     }
 
     void sdInstPage::onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos) {
@@ -188,6 +216,12 @@ namespace inst::ui {
             Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);
         }
         inst::util::playNavigationClickIfNeeded(Down);
+        if (queueAddMode && (Down & HidNpadButton_B)) { instPage::showQueue(); return; }
+        if (queueAddMode && (Down & HidNpadButton_Y)) {
+            if (!selectedTitles.empty()) selectedTitles.clear();
+            else for (const auto& path : ourFiles) if (instPage::canEnqueueTitle(path.string())) selectedTitles.push_back(path);
+            drawMenuItems(false, currentDir); Down &= ~HidNpadButton_Y;
+        }
 
         if (!Pos.IsEmpty()) {
             if (!this->touchTapActive) {

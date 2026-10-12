@@ -599,7 +599,7 @@ namespace {
 
     std::uint64_t GetOfflineLookupTitleId(const remoteInstStuff::RemoteItem& item);
 
-    std::string GetRemoteIconCachePath(const remoteInstStuff::RemoteItem& item)
+    std::string GetRemoteIconCachePath(const remoteInstStuff::RemoteItem& item, bool probeStorage = true)
     {
         if (!item.hasIconUrl)
             return "";
@@ -607,12 +607,12 @@ namespace {
         const std::filesystem::path primaryDir(inst::config::remoteIconsDir);
         const std::filesystem::path legacyDir(inst::config::legacyShopIconsDir);
         std::error_code ec;
-        bool primaryUsable = std::filesystem::exists(primaryDir, ec);
-        if (!primaryUsable) {
+        bool primaryUsable = probeStorage && std::filesystem::exists(primaryDir, ec);
+        if (probeStorage && !primaryUsable) {
             ec.clear();
             primaryUsable = std::filesystem::create_directory(primaryDir, ec);
         }
-        const bool legacyUsable = std::filesystem::exists(legacyDir, ec);
+        const bool legacyUsable = probeStorage && std::filesystem::exists(legacyDir, ec);
 
         std::string urlPath = item.iconUrl;
         std::string ext = ".jpg";
@@ -633,6 +633,7 @@ namespace {
 
         const std::filesystem::path primaryPath = primaryDir / (fileName + ext);
         const std::filesystem::path legacyPath = legacyDir / (fileName + ext);
+        if (!probeStorage) return primaryPath.string();
         if (std::filesystem::exists(primaryPath))
             return primaryPath.string();
         if (std::filesystem::exists(legacyPath))
@@ -2362,22 +2363,19 @@ namespace remoteInstStuff {
                 m_cnmt_infos.push_back(info);
             }
 
-            void CommitLatest() {
-                if (m_contentMeta.empty()) return;
-                const size_t idx = m_contentMeta.size() - 1;
-                tin::data::ByteBuffer install_buf;
-                m_contentMeta[idx].GetInstallContentMeta(install_buf, m_cnmt_infos[idx], m_ignoreReqFirmVersion);
-                InstallContentMetaRecords(install_buf, idx);
-                InstallApplicationRecord(idx);
-            }
+            void TrackNca(const NcmContentId& id) { TrackSessionInstalledNca(id); }
 
             void CommitAll() {
+                if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
                 for (size_t i = 0; i < m_contentMeta.size(); i++) {
                     tin::data::ByteBuffer install_buf;
                     m_contentMeta[i].GetInstallContentMeta(install_buf, m_cnmt_infos[i], m_ignoreReqFirmVersion);
                     InstallContentMetaRecords(install_buf, i);
-                    InstallApplicationRecord(i);
                 }
+                for (size_t i = 0; i < m_contentMeta.size(); i++) InstallApplicationRecord(i);
+                m_committed = true;
+                m_metaBackups.clear();
+                m_sessionInstalledNcas.clear();
             }
 
         private:
@@ -2548,6 +2546,7 @@ namespace remoteInstStuff {
                 std::vector<std::uint8_t> cert_buf;
             };
 
+            StreamInstallHelper helper(dest_storage, inst::config::ignoreReqVers);
             auto ensureStarted = [&](EntryState& entry) {
                 if (entry.started) return true;
                 if (!entry.is_nca) {
@@ -2555,13 +2554,16 @@ namespace remoteInstStuff {
                     return true;
                 }
                 entry.storage = std::make_shared<nx::ncm::ContentStorage>(dest_storage);
+                if (entry.storage->Has(entry.nca_id)) {
+                    entry.started = true;
+                    return true;
+                }
+                helper.TrackNca(entry.nca_id);
                 try { entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id); } catch (...) {}
                 entry.nca_writer = std::make_unique<NcaWriter>(entry.nca_id, entry.storage);
                 entry.started = true;
                 return true;
             };
-
-            StreamInstallHelper helper(dest_storage, inst::config::ignoreReqVers);
 
             std::unordered_map<std::string, EntryState> entries;
             entries.reserve(collections.size());
@@ -2573,11 +2575,9 @@ namespace remoteInstStuff {
                         if (entry.nca_writer)
                             entry.nca_writer->close();
                     } catch (...) {}
-                    try { entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id); } catch (...) {}
-                    try {
-                        if (entry.storage->Has(entry.nca_id))
-                            entry.storage->Delete(entry.nca_id);
-                    } catch (...) {}
+                    // The helper owns rollback of new content. Existing content
+                    // must survive cancellation; release writers before rollback.
+                    entry.nca_writer.reset();
                 }
             };
 
@@ -2624,30 +2624,27 @@ namespace remoteInstStuff {
                         entry.cert_buf.insert(entry.cert_buf.end(), buf.data(), buf.data() + bytes_read);
                         entry.written += bytes_read;
                         if (entry.written >= entry.size) entry.complete = true;
-                    } else if (entry.is_nca && entry.nca_writer) {
-                        entry.nca_writer->write(buf.data(), bytes_read);
+                    } else if (entry.is_nca) {
+                        if (entry.nca_writer) entry.nca_writer->write(buf.data(), bytes_read);
                         entry.written += bytes_read;
                         if (entry.written >= entry.size) {
-                            entry.nca_writer->close();
-                            try {
+                            if (entry.nca_writer) {
+                                entry.nca_writer->close();
                                 entry.storage->Register(*(NcmPlaceHolderId*)&entry.nca_id, entry.nca_id);
-                                entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id);
-                            } catch (...) {}
+                                try { entry.storage->DeletePlaceholder(*(NcmPlaceHolderId*)&entry.nca_id); } catch (...) {}
+                            }
                             entry.complete = true;
                             if (entry.is_cnmt) {
-                                try {
-                                    std::string cnmt_path = entry.storage->GetPath(entry.nca_id);
-                                    nx::ncm::ContentMeta meta = tin::util::GetContentMetaFromNCA(cnmt_path);
-                                    NcmContentInfo cnmt_info{};
-                                    cnmt_info.content_id = entry.nca_id;
-                                    ncmU64ToContentInfoSize(entry.size & 0xFFFFFFFFFFFF, &cnmt_info);
-                                    cnmt_info.content_type = NcmContentType_Meta;
-                                    helper.AddContentMeta(meta, cnmt_info);
-                                    helper.CommitLatest();
-                                } catch (...) {}
+                                std::string cnmt_path = entry.storage->GetPath(entry.nca_id);
+                                nx::ncm::ContentMeta meta = tin::util::GetContentMetaFromNCA(cnmt_path);
+                                NcmContentInfo cnmt_info{};
+                                cnmt_info.content_id = entry.nca_id;
+                                ncmU64ToContentInfoSize(entry.size & 0xFFFFFFFFFFFF, &cnmt_info);
+                                cnmt_info.content_type = NcmContentType_Meta;
+                                helper.AddContentMeta(meta, cnmt_info);
                             }
                             // Release IPC handles immediately — no longer needed after
-                            // Register/CommitLatest. Accumulating these across all NCA
+                            // Register. Accumulating these across all NCA
                             // entries exhausts the kernel handle table on large XCI packages.
                             entry.nca_writer = nullptr;
                             entry.storage = nullptr;
@@ -2686,8 +2683,8 @@ namespace remoteInstStuff {
                             inst::ui::instPage::setInstInfoText("inst.info_page.downloading"_lang + FormatOneDecimal(speed) + "MB/s");
                             inst::ui::instPage::setProgressDetailText(
                                 "Downloaded " + FormatOneDecimal((double)processedBytes / 1000000.0) + " / " +
-                                FormatOneDecimal((double)totalBytes / 1000000.0) + " MB (" +
-                                std::to_string(progress) + "%) • ETA " + etaText
+                                FormatOneDecimal((double)totalBytes / 1000000.0) + " MB • " +
+                                FormatOneDecimal(speed) + " MB/s • ETA " + etaText
                             );
                         }
                     }
@@ -2713,7 +2710,7 @@ namespace remoteInstStuff {
 
             helper.CommitAll();
             inst::ui::instPage::setInstBarPerc(100);
-            inst::ui::instPage::setProgressDetailText("Downloaded 100% • Verifying and installing...");
+            inst::ui::instPage::setProgressDetailText("Download complete • Verifying and installing...");
             return true;
         }
     }
@@ -2744,18 +2741,41 @@ namespace remoteInstStuff {
         return "";
     }
 
-    void installTitleRemote(const std::vector<RemoteItem>& items, int storage, const std::string& sourceLabel)
+    void installTitleRemote(const std::vector<RemoteItem>& items, int storage, const std::string& sourceLabel, const std::vector<RemoteItem>& availableItems)
     {
+        if (items.empty()) return;
+        if (inst::ui::mainApp->IsUiThread()) {
+            inst::ui::mainApp->RunInstallWork([=] { installTitleRemote(items, storage, sourceLabel, availableItems); });
+            return;
+        }
         inst::util::initInstallServices();
         inst::ui::instPage::loadInstallScreen();
         bool nspInstalled = true;
         NcmStorageId destStorageId = storage ? NcmStorageId_BuiltInUser : NcmStorageId_SdCard;
         inst::diag::StartSession("remote", items.size());
 
+        auto catalog = items;
+        std::unordered_set<std::string> catalogUrls;
+        for (const auto& item : items) catalogUrls.insert(item.url);
+        for (const auto& item : availableItems) {
+            if (!item.isCheat && item.saveId.empty() && catalogUrls.insert(item.url).second)
+                catalog.push_back(item);
+        }
+        std::vector<size_t> selected;
+        for (size_t i = 0; i < items.size(); ++i) selected.push_back(i);
+        size_t completedCount = 0;
         std::vector<std::string> names;
         names.reserve(items.size());
-        for (const auto& item : items)
+        for (const auto& item : catalog)
             names.push_back(inst::util::shortenString(item.name, 38, true));
+
+        std::vector<inst::ui::QueueEntry> queueEntries;
+        for (const auto& item : catalog) {
+            std::string detail = item.appType == NcmContentMetaType_Patch ? "Update" : (item.appType == NcmContentMetaType_AddOnContent ? "DLC" : "Game");
+            if (item.size) detail += "  •  " + FormatOneDecimal(static_cast<double>(item.size) / (item.size >= 1000000000 ? 1000000000.0 : 1000000.0)) + (item.size >= 1000000000 ? " GB" : " MB");
+            queueEntries.push_back({item.name, item.url, detail, GetRemoteIconCachePath(item, false), GetOfflineLookupTitleId(item), item.hasIconUrl ? item.iconUrl : ""});
+        }
+        inst::ui::instPage::configureQueue(queueEntries, selected, [] { inst::ui::mainApp->remoteinstPage->beginQueueAddMode(); });
 
         std::vector<int> previousClockValues;
         if (inst::config::overClock) {
@@ -2764,39 +2784,43 @@ namespace remoteInstStuff {
             previousClockValues.push_back(inst::util::setClockSpeed(2, 1600000000)[0]);
         }
 
-        if (!inst::config::remoteUser.empty() || !inst::config::remotePass.empty())
+        if (!inst::config::remoteUser.empty() || !inst::config::remotePass.empty()) {
             tin::network::SetBasicAuth(inst::config::remoteUser, inst::config::remotePass,
                 NormalizeRemoteUrl(inst::config::remoteUrl));
-        else
+        } else {
             tin::network::ClearBasicAuth();
+        }
 
         std::string currentName;
         bool currentGoogleDriveWithoutApiKey = false;
         std::string currentIndexSourceUrl;
         try {
-            for (size_t i = 0; i < items.size(); i++) {
-                LOG_DEBUG("%s %s\n", "Install request from", items[i].url.c_str());
+            while (auto next = inst::ui::instPage::nextQueuedItem()) {
+                const size_t i = *next;
+                LOG_DEBUG("%s %s\n", "Install request from", catalog[i].url.c_str());
                 currentName = names[i];
-                currentGoogleDriveWithoutApiKey = items[i].googleDriveWithoutApiKey;
-                currentIndexSourceUrl = items[i].indexSourceUrl;
+                currentGoogleDriveWithoutApiKey = catalog[i].googleDriveWithoutApiKey;
+                currentIndexSourceUrl = catalog[i].indexSourceUrl;
                 inst::diag::NoteTransferReceived(currentName);
                 if (!currentIndexSourceUrl.empty())
                     inst::diag::NoteStep("Index source URL: " + currentIndexSourceUrl, false);
-                UpdateInstallIcon(items[i]);
+                UpdateInstallIcon(catalog[i]);
                 inst::ui::instPage::setTopInstInfoText("inst.info_page.top_info0"_lang + currentName + sourceLabel);
                 std::unique_ptr<tin::install::Install> installTask;
-                bool isXci = IsXciExtension(items[i].name) || IsXciExtension(items[i].url) ||
-                    IsXciMagic(items[i].url, items[i].requestHeaders);
+                bool isXci = IsXciExtension(catalog[i].name) || IsXciExtension(catalog[i].url) ||
+                    IsXciMagic(catalog[i].url, catalog[i].requestHeaders);
                 if (isXci) {
                     inst::ui::instPage::setInstInfoText("Transfer received. Install started...");
                     inst::diag::NoteInstallStarted(currentName);
-                    if (!InstallXciHttpStream(items[i].url, items[i].requestHeaders, destStorageId)) {
+                    if (!InstallXciHttpStream(catalog[i].url, catalog[i].requestHeaders, destStorageId)) {
                         THROW_FORMAT("Failed to install XCI from remote.");
                     }
                     inst::diag::RecordSuccess(currentName);
+                    ++completedCount;
+                    inst::ui::instPage::finishQueuedItem();
                     continue;
                 } else {
-                    auto httpNSP = std::make_shared<tin::install::nsp::HTTPNSP>(items[i].url, items[i].requestHeaders);
+                    auto httpNSP = std::make_shared<tin::install::nsp::HTTPNSP>(catalog[i].url, catalog[i].requestHeaders);
                     installTask = std::make_unique<tin::install::nsp::NSPInstall>(destStorageId, inst::config::ignoreReqVers, httpNSP);
                 }
 
@@ -2807,10 +2831,13 @@ namespace remoteInstStuff {
                 installTask->Prepare();
                 installTask->Begin();
                 inst::diag::RecordSuccess(currentName);
+                ++completedCount;
+                inst::ui::instPage::finishQueuedItem();
                 inst::ui::instPage::setInstInfoText("Install succeeded: " + currentName);
             }
         }
         catch (std::exception& e) {
+            inst::ui::instPage::finishInstall();
             LOG_DEBUG("Failed to install");
             LOG_DEBUG("%s", e.what());
             fprintf(stdout, "%s", e.what());
@@ -2850,6 +2877,7 @@ namespace remoteInstStuff {
             nspInstalled = false;
         }
 
+        inst::ui::instPage::finishInstall();
         tin::network::ClearBasicAuth();
 
         if (previousClockValues.size() > 0) {
@@ -2865,10 +2893,10 @@ namespace remoteInstStuff {
             if (!inst::config::soundEnabled) audioPath = "";
             if (std::filesystem::exists(inst::config::appDir + "/success.wav")) audioPath = inst::config::appDir + "/success.wav";
             std::thread audioThread(inst::util::playAudio, audioPath);
-            if (items.size() > 1)
-                inst::ui::mainApp->CreateShowDialog(std::to_string(items.size()) + "inst.info_page.desc0"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
+            if (completedCount > 1)
+                inst::ui::mainApp->CreateShowDialog(std::to_string(completedCount) + "inst.info_page.desc0"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
             else
-                inst::ui::mainApp->CreateShowDialog(names.front() + "inst.info_page.desc1"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
+                inst::ui::mainApp->CreateShowDialog(currentName + "inst.info_page.desc1"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
             audioThread.join();
         }
 

@@ -46,8 +46,8 @@ namespace tin::data
     {
         private:
             size_t m_totalDataSize = 0;
-            size_t m_sizeBuffered = 0;
-            size_t m_sizeWrittenToPlaceholder = 0;
+            std::atomic<size_t> m_sizeBuffered{0};
+            std::atomic<size_t> m_sizeWrittenToPlaceholder{0};
 
             // The current segment to which further data will be appended
             u64 m_currentFreeSegment = 0;

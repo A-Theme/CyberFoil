@@ -92,6 +92,11 @@ namespace usbInstStuff {
 
     void installTitleUsb(std::vector<std::string> ourTitleList, int ourStorage)
     {
+        if (ourTitleList.empty()) return;
+        if (inst::ui::mainApp->IsUiThread()) {
+            inst::ui::mainApp->RunInstallWork([=] { installTitleUsb(ourTitleList, ourStorage); });
+            return;
+        }
         inst::util::initInstallServices();
         inst::ui::instPage::loadInstallScreen();
         bool nspInstalled = true;
@@ -99,13 +104,17 @@ namespace usbInstStuff {
         std::string currentName;
 
         if (ourStorage) m_destStorageId = NcmStorageId_BuiltInUser;
-        unsigned int fileItr;
+        size_t completedCount = 0;
         inst::diag::StartSession("usb", ourTitleList.size());
 
         std::vector<std::string> fileNames;
         for (long unsigned int i = 0; i < ourTitleList.size(); i++) {
             fileNames.push_back(inst::util::shortenString(inst::util::formatUrlString(ourTitleList[i]), 40, true));
         }
+
+        std::vector<size_t> selected;
+        for (size_t i = 0; i < ourTitleList.size(); ++i) selected.push_back(i);
+        inst::ui::instPage::configureQueue(fileNames, selected);
 
         std::vector<int> previousClockValues;
         if (inst::config::overClock) {
@@ -115,7 +124,8 @@ namespace usbInstStuff {
         }
 
         try {
-            for (fileItr = 0; fileItr < ourTitleList.size(); fileItr++) {
+            while (auto next = inst::ui::instPage::nextQueuedItem()) {
+                const size_t fileItr = *next;
                 currentName = fileNames[fileItr];
                 inst::diag::NoteTransferReceived(currentName);
                 inst::ui::instPage::setTopInstInfoText("inst.info_page.top_info0"_lang + currentName + "inst.usb.source_string"_lang);
@@ -137,10 +147,13 @@ namespace usbInstStuff {
 
                 installTask->Begin();
                 inst::diag::RecordSuccess(currentName);
+                ++completedCount;
+                inst::ui::instPage::finishQueuedItem();
                 inst::ui::instPage::setInstInfoText("Install succeeded: " + currentName);
             }
         }
         catch (std::exception& e) {
+            inst::ui::instPage::finishInstall();
             LOG_DEBUG("Failed to install");
             LOG_DEBUG("%s", e.what());
             fprintf(stdout, "%s", e.what());
@@ -164,6 +177,8 @@ namespace usbInstStuff {
             nspInstalled = false;
         }
 
+        inst::ui::instPage::finishInstall();
+
         if (previousClockValues.size() > 0) {
             inst::util::setClockSpeed(0, previousClockValues[0]);
             inst::util::setClockSpeed(1, previousClockValues[1]);
@@ -178,8 +193,8 @@ namespace usbInstStuff {
             if (!inst::config::soundEnabled) audioPath = "";
             if (std::filesystem::exists(inst::config::appDir + "/success.wav")) audioPath = inst::config::appDir + "/success.wav";
             std::thread audioThread(inst::util::playAudio,audioPath);
-            if (ourTitleList.size() > 1) inst::ui::mainApp->CreateShowDialog(std::to_string(ourTitleList.size()) + "inst.info_page.desc0"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
-            else inst::ui::mainApp->CreateShowDialog(fileNames[0] + "inst.info_page.desc1"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
+            if (completedCount > 1) inst::ui::mainApp->CreateShowDialog(std::to_string(completedCount) + "inst.info_page.desc0"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
+            else inst::ui::mainApp->CreateShowDialog(currentName + "inst.info_page.desc1"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
             audioThread.join();
         }
         
