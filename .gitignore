@@ -15,6 +15,9 @@ scripts
 *.ps1
 *.log
 *.py
+!tools/create_custom_packs.py
+!tests/custom_packs_tests.py
+__pycache__/
 *.sh
 *.bat
 *.a

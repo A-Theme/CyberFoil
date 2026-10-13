@@ -95,11 +95,16 @@ namespace inst::offline
         bool g_metadataAttempted = false;
         bool g_metadataAvailable = false;
 
-        std::unordered_map<std::uint64_t, PackedIconEntry> g_iconPackEntries;
+        struct IconPack {
+            std::unordered_map<std::uint64_t, PackedIconEntry> entries;
+            std::string path;
+            std::uint64_t dataOffset = 0;
+        };
+
+        IconPack g_iconPack;
+        IconPack g_customIconPack;
         bool g_iconPackAttempted = false;
         bool g_iconPackAvailable = false;
-        std::string g_iconPackPath;
-        std::uint64_t g_iconPackDataOffset = 0;
 
         // Legacy fallback for folder-based icons.
         std::unordered_map<std::uint64_t, std::string> g_legacyIconExtById;
@@ -128,6 +133,16 @@ namespace inst::offline
                 base + "/artefacts/titles.US.en.json",
                 base + "/offline_db/title.us.en.json",
                 base + "/artefacts/title.us.en.json"
+            };
+        }
+
+        std::vector<std::string> GetCustomPackCandidates(const char* filename)
+        {
+            const std::string base = inst::config::appDir;
+            return {
+                base + "/offline_db/" + filename,
+                base + "/" + filename,
+                base + "/artefacts/" + filename
             };
         }
 
@@ -454,9 +469,11 @@ namespace inst::offline
             if (parsed.empty())
                 return false;
 
-            g_metadataById = std::move(parsed);
+            // Load defaults first, then replace matching title IDs with custom entries.
+            for (auto& entry : parsed)
+                g_metadataById[entry.first] = std::move(entry.second);
             LOG_DEBUG("Offline DB: loaded %llu metadata entries from packed file %s\n",
-                static_cast<unsigned long long>(g_metadataById.size()), path.c_str());
+                static_cast<unsigned long long>(parsed.size()), path.c_str());
             return true;
         }
 
@@ -529,19 +546,26 @@ namespace inst::offline
                     continue;
                 if (TryLoadMetadataFromPackedFile(path)) {
                     g_metadataAvailable = true;
-                    return true;
+                    break;
                 }
             }
-            for (const auto& path : GetMetadataJsonCandidates()) {
-                if (!FileExists(path))
-                    continue;
-                if (TryLoadMetadataFromJsonFile(path)) {
+            if (!g_metadataAvailable) {
+                for (const auto& path : GetMetadataJsonCandidates()) {
+                    if (!FileExists(path))
+                        continue;
+                    if (TryLoadMetadataFromJsonFile(path)) {
+                        g_metadataAvailable = true;
+                        break;
+                    }
+                }
+            }
+            for (const auto& path : GetCustomPackCandidates("custom_titles.pack")) {
+                if (FileExists(path) && TryLoadMetadataFromPackedFile(path)) {
                     g_metadataAvailable = true;
-                    return true;
+                    break;
                 }
             }
-            g_metadataAvailable = false;
-            return false;
+            return g_metadataAvailable;
         }
 
         bool TryLoadLegacyIconIndexFromFile(const std::string& path)
@@ -597,7 +621,7 @@ namespace inst::offline
             }
         }
 
-        bool TryLoadIconPackFromFile(const std::string& path)
+        bool TryLoadIconPackFromFile(const std::string& path, IconPack& pack)
         {
             std::error_code ec;
             const auto fileSize = std::filesystem::file_size(path, ec);
@@ -653,9 +677,9 @@ namespace inst::offline
             if (parsed.empty())
                 return false;
 
-            g_iconPackEntries = std::move(parsed);
-            g_iconPackPath = path;
-            g_iconPackDataOffset = header.dataOffset;
+            pack.entries = std::move(parsed);
+            pack.path = path;
+            pack.dataOffset = header.dataOffset;
             return true;
         }
 
@@ -667,13 +691,18 @@ namespace inst::offline
             for (const auto& path : GetIconPackCandidates()) {
                 if (!FileExists(path))
                     continue;
-                if (TryLoadIconPackFromFile(path)) {
+                if (TryLoadIconPackFromFile(path, g_iconPack)) {
                     g_iconPackAvailable = true;
-                    return true;
+                    break;
                 }
             }
-            g_iconPackAvailable = false;
-            return false;
+            for (const auto& path : GetCustomPackCandidates("custom_icons.pack")) {
+                if (FileExists(path) && TryLoadIconPackFromFile(path, g_customIconPack)) {
+                    g_iconPackAvailable = true;
+                    break;
+                }
+            }
+            return g_iconPackAvailable;
         }
 
         bool TryReadFileBytes(const std::string& path, std::vector<std::uint8_t>& outData)
@@ -691,19 +720,18 @@ namespace inst::offline
             return static_cast<std::size_t>(in.gcount()) == outData.size();
         }
 
-        bool TryReadPackedIcon(std::uint64_t baseTitleId, std::vector<std::uint8_t>& outData)
+        bool TryReadPackedIconFromPack(const IconPack& pack, std::uint64_t baseTitleId,
+            std::vector<std::uint8_t>& outData)
         {
-            if (!EnsureIconPackLoaded())
-                return false;
-            const auto it = g_iconPackEntries.find(baseTitleId);
-            if (it == g_iconPackEntries.end())
+            const auto it = pack.entries.find(baseTitleId);
+            if (it == pack.entries.end())
                 return false;
 
-            std::ifstream in(g_iconPackPath, std::ios::binary);
+            std::ifstream in(pack.path, std::ios::binary);
             if (!in)
                 return false;
 
-            const std::uint64_t absOffset = g_iconPackDataOffset + it->second.offset;
+            const std::uint64_t absOffset = pack.dataOffset + it->second.offset;
             in.seekg(static_cast<std::streamoff>(absOffset), std::ios::beg);
             if (!in)
                 return false;
@@ -711,6 +739,14 @@ namespace inst::offline
             outData.resize(it->second.size);
             in.read(reinterpret_cast<char*>(outData.data()), static_cast<std::streamsize>(outData.size()));
             return static_cast<std::size_t>(in.gcount()) == outData.size();
+        }
+
+        bool TryReadPackedIcon(std::uint64_t baseTitleId, std::vector<std::uint8_t>& outData)
+        {
+            if (!EnsureIconPackLoaded())
+                return false;
+            return TryReadPackedIconFromPack(g_customIconPack, baseTitleId, outData) ||
+                TryReadPackedIconFromPack(g_iconPack, baseTitleId, outData);
         }
 
         bool TryFindLegacyIconPath(std::uint64_t baseTitleId, std::string& outPath)
@@ -759,11 +795,10 @@ namespace inst::offline
         g_metadataAttempted = false;
         g_metadataAvailable = false;
 
-        g_iconPackEntries.clear();
+        g_iconPack = {};
+        g_customIconPack = {};
         g_iconPackAttempted = false;
         g_iconPackAvailable = false;
-        g_iconPackPath.clear();
-        g_iconPackDataOffset = 0;
 
         g_legacyIconExtById.clear();
         g_legacyIconIndexAttempted = false;
@@ -787,7 +822,9 @@ namespace inst::offline
 
     bool HasIcon(std::uint64_t baseTitleId)
     {
-        if (EnsureIconPackLoaded() && g_iconPackEntries.find(baseTitleId) != g_iconPackEntries.end())
+        if (EnsureIconPackLoaded() &&
+            (g_customIconPack.entries.find(baseTitleId) != g_customIconPack.entries.end() ||
+             g_iconPack.entries.find(baseTitleId) != g_iconPack.entries.end()))
             return true;
         std::string path;
         return TryFindLegacyIconPath(baseTitleId, path);
