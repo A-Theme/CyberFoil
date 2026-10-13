@@ -61,6 +61,73 @@ An `icon` path is relative to the JSON file (absolute paths also work). Alternat
 
 Run the pack format regression tests with `python -m unittest discover -s tests -p custom_packs_tests.py`.
 
+## External themes
+
+Copy one or more theme JSON files into `sdmc:/switch/CyberFoil/theme/`, then open **Settings > System > Theme** to select one. Use **A** or tap a theme to save and apply it immediately; **B** returns to settings. The picker stays open and the checked row shows the selection. **Default** restores the built-in appearance without removing any theme files. After editing a theme or its images, select it again to reload them. Changes wait until an active installation finishes before layouts are recreated.
+
+An **Applying theme…** screen shows an animated spinner and progress bar during the change. Layouts are recreated one per frame, then the theme picker returns automatically.
+
+The picker lists valid, enabled `.json` files directly in `theme/`, plus `theme.json` inside each immediate subfolder. For themes with their own images, use a folder such as `theme/my-theme/theme.json` and put its assets alongside that JSON file. Image paths are relative to the selected JSON file's folder. Disabled themes, malformed JSON, and unsupported versions are omitted from the picker. A missing or invalid saved theme falls back to the built-in appearance at startup.
+
+The selection is stored as `themeFile` in `config.json`: a filename such as `violet-dusk.json`, a relative path such as `my-theme/theme.json`, or an empty string for **Default**. Existing installations still load `theme/theme.json` until a selection is made.
+
+Example palettes are available in `examples/theme/`:
+
+- [Midnight Blue](examples/theme/midnight-blue.json): navy panels with blue accents.
+- [OLED Mint](examples/theme/oled-mint.json): black background with mint accents.
+- [Forest Green](examples/theme/forest-green.json): dark green panels with leaf-green accents.
+- [Violet Dusk](examples/theme/violet-dusk.json): purple panels with lavender accents.
+- [Ember Amber](examples/theme/ember-amber.json): warm brown panels with amber accents.
+- [Crimson Night](examples/theme/crimson-night.json): deep red panels with crimson accents and bright text.
+
+Copy any or all of these files into `switch/CyberFoil/theme/` on the SD card, keeping their filenames. Select one in **Settings > System > Theme** to apply it immediately. These examples need no additional images and use the built-in logo and icons.
+
+The schema is specific to CyberFoil; existing Tinfoil theme JSON files need adapting. Version 1 supports shared colors, a background image, a logo/banner, and individual built-in UI image replacements across the main menu, Remote, local file browsers, installation screen, and settings. It keeps the existing geometry and fonts. Per-element border widths, border colors, and the framework's modal dialogs/system keyboard are not customized by this version.
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "name": "My Theme",
+  "colors": {
+    "background": "#101827",
+    "text": "#EAF2FFFF",
+    "selected_text": "#FFFFFFFF",
+    "accent": "#56A8FFFF",
+    "highlight": "#245F9DCC"
+  },
+  "images": {
+    "background": "background.png",
+    "logo": "banner.png",
+    "icons/settings.png": "icons/my-settings.png",
+    "icons/folder.png": "icons/my-folder.png"
+  }
+}
+```
+
+All fields except the JSON object itself are optional. Colors use `#RRGGBB` or `#RRGGBBAA`, with alpha last; six-digit colors are opaque. Supported color names are:
+
+| Name | Usage |
+| --- | --- |
+| `background` | Layout background; suppresses the default background image when no custom image is supplied |
+| `header`, `footer` | Top and bottom bars |
+| `panel` | Information bars, tiles, queue cards, and overlays |
+| `text` | Primary labels and menu text |
+| `selected_text` | Focused menu items, main-grid labels, Remote focus title/marquee, and selected queue titles |
+| `muted_text` | Secondary installation queue labels |
+| `accent` | Progress bars and accents; also tints highlights and scrollbars unless their own colors are supplied |
+| `highlight` | Focus backgrounds and selected tiles |
+| `scrollbar` | Menu scrollbar |
+| `progress_track` | Installation progress bar track |
+
+Shared `panel` and `accent` tints retain the original element's opacity, multiplied by the theme color's alpha. Explicit `header`, `footer`, `highlight`, and `scrollbar` values use the supplied alpha directly. Battery/network status and completion/error colors keep their existing meaning.
+
+Image paths are relative to the selected JSON file's directory; use forward slashes, and keep assets inside that directory. `background` and `logo` are aliases for `background.jpg` and `logo.png`. Other image keys match paths under `romfs/images/`, for example `icons/micro-sd.png`, `icons/remote.png`, `icons/usb-install.png`, `icons/checkbox-blank-outline.png`, and `icons/check-box-outline.png`. Override both checkbox images when changing their design. Game cover art continues to come from the title database or Remote.
+
+Use a **1280×720** background and a **480×93** banner (the banner is fitted into that existing space). PNG, JPEG, and WebP work through the bundled image decoder. Assets must be valid, no larger than 16 MiB each, and no larger than 4096 pixels on either side. An empty background path (`"background": ""`) disables background images. Custom background settings override OLED mode's default background; omitted settings keep the current OLED/default appearance and legacy `background.png` behavior.
+
+Missing or corrupt images and invalid individual colors fall back to the existing assets/colors. Malformed JSON or an unsupported schema version restores the default theme. The JSON file is limited to 256 KiB. Removing the theme never removes user assets.
+
 ## Remote Configuration
 - For LAN remote, in Settings > Remote, choose **Discover LAN Servers**. Scans take about three seconds; B cancels and X scans again. Results show name, LAN address/HTTP port, version, and public/private status. Select a result, then use the normal Remote form and **Save Remote** to save/apply it. Manual entry remains available and discovery does not overwrite a saved URL on its own.
 - [AeroFoil](https://github.com/luketanti/AeroFoil)'s **LAN discovery** setting must be enabled, and UDP **8465** must be allowed through the server firewall. Wi-Fi client isolation and separate subnets can prevent discovery. Docker must deliver LAN broadcasts to the container; host networking works on supported platforms (publishing a UDP port alone may not deliver broadcast traffic).

@@ -3,6 +3,7 @@
 #include "ui/bottomHint.hpp"
 #include "util/config.hpp"
 #include "util/lan_discovery.hpp"
+#include "util/theme.hpp"
 #include <thread>
 
 using namespace pu::ui::elm;
@@ -13,6 +14,7 @@ namespace inst::ui {
             optionsPage();
             ~optionsPage();
             void stopDiscoveryWorker();
+            void ShowThemePicker();
             PU_SMART_CTOR(optionsPage)
             void onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos);
             static void askToUpdate(std::vector<std::string> updateInfo);
@@ -65,6 +67,11 @@ namespace inst::ui {
             int selectedSection = 0;
             bool tabsFocused = false;
             bool remoteListVisible = false;
+            bool themeListVisible = false;
+            std::vector<inst::theme::Choice> themeChoices;
+            void openThemeList();
+            void closeThemeList();
+            void handleThemeListInput(u64 down, pu::ui::Touch pos);
             bool remoteFormVisible = false;
             bool remoteFormWasActive = false;
             bool remoteFormReturnToList = false;

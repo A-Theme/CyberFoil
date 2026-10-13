@@ -25,7 +25,9 @@
 #include "util/util.hpp"
 #include "ui/bottomHint.hpp"
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 #define RemoteDlcTrace(...) ((void)0)
 #define ResetRemoteDlcTrace() ((void)0)
 
@@ -919,27 +921,24 @@ namespace inst::ui {
     extern MainApplication *mainApp;
 
     remoteInstPage::remoteInstPage() : Layout::Layout() {
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto infoColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto infoColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->infoRect = Rectangle::New(0, 75, 1280, 60, infoColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -984,30 +983,30 @@ namespace inst::ui {
         this->butText = TextBlock::New(10, 678, "", 20);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
         this->setButtonsText("inst.remote.buttons_loading"_lang);
-        this->menu = pu::ui::elm::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 36, 14, 22);
+        this->menu = inst::theme::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 36, 14, 22);
         if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->menu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->menu->SetOnFocusColor(COLOR("#00000033"));
-            this->menu->SetScrollbarColor(COLOR("#17090980"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
-        this->infoImage = Image::New(34, 90, "romfs:/images/icons/remote-connection-waiting.png");
-        this->previewImage = Image::New(900, 230, "romfs:/images/icons/title-placeholder.png");
+        this->infoImage = Image::New(34, 90, inst::theme::Asset("romfs:/images/icons/remote-connection-waiting.png"));
+        this->previewImage = Image::New(900, 230, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
         this->previewImage->SetWidth(320);
         this->previewImage->SetHeight(320);
-        auto highlightColor = inst::config::oledMode ? COLOR("#FFFFFF66") : COLOR("#FFFFFF33");
+        auto highlightColor = inst::theme::Color("highlight", inst::config::oledMode ? COLOR("#FFFFFF66") : COLOR("#FFFFFF33"));
         this->gridHighlight = Rectangle::New(0, 0, kGridTileWidth + 8, kGridTileHeight + 8, highlightColor);
         this->gridHighlight->SetVisible(false);
         this->gridImages.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
-            auto img = Image::New(0, 0, "romfs:/images/icons/title-placeholder.png");
+            auto img = Image::New(0, 0, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
             img->SetWidth(kGridTileWidth);
             img->SetHeight(kGridTileHeight);
             img->SetVisible(false);
             this->gridImages.push_back(img);
         }
-        auto selectedColor = COLOR("#34C75966");
+        auto selectedColor = inst::theme::Color("accent", COLOR("#34C75966"));
         this->remoteGridSelectHighlights.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
             auto highlight = Rectangle::New(0, 0, kGridTileWidth + 8, kGridTileHeight + 8, selectedColor);
@@ -1016,14 +1015,14 @@ namespace inst::ui {
         }
         this->remoteGridSelectIcons.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
-            auto icon = Image::New(0, 0, "romfs:/images/icons/title_selected.png");
+            auto icon = Image::New(0, 0, inst::theme::Asset("romfs:/images/icons/title_selected.png"));
             icon->SetWidth(120);
             icon->SetHeight(120);
             icon->SetVisible(false);
             this->remoteGridSelectIcons.push_back(icon);
         }
         this->gridTitleText = TextBlock::New(10, 649, "", 18);
-        this->gridTitleText->SetColor(COLOR("#FFFFFFFF"));
+        this->gridTitleText->SetColor(inst::theme::Color("selected_text", COLOR("#FFFFFFFF")));
         this->gridTitleText->SetVisible(false);
         this->imageLoadingText = TextBlock::New(0, 98, "Fetching images...", 18);
         this->imageLoadingText->SetColor(COLOR("#FFFFFFFF"));
@@ -1066,13 +1065,13 @@ namespace inst::ui {
         this->saveVersionSelectorTitleText = TextBlock::New(114, 112, "", 24);
         this->saveVersionSelectorTitleText->SetColor(COLOR("#FFFFFFFF"));
         this->saveVersionSelectorTitleText->SetVisible(false);
-        this->saveVersionSelectorMenu = pu::ui::elm::Menu::New(114, 152, 1052, COLOR("#FFFFFF00"), 44, 8, 20);
+        this->saveVersionSelectorMenu = inst::theme::Menu::New(114, 152, 1052, COLOR("#FFFFFF00"), 44, 8, 20);
         if (inst::config::oledMode) {
-            this->saveVersionSelectorMenu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->saveVersionSelectorMenu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->saveVersionSelectorMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->saveVersionSelectorMenu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->saveVersionSelectorMenu->SetOnFocusColor(COLOR("#00000033"));
-            this->saveVersionSelectorMenu->SetScrollbarColor(COLOR("#17090980"));
+            this->saveVersionSelectorMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->saveVersionSelectorMenu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
         this->saveVersionSelectorMenu->SetVisible(false);
         this->saveVersionSelectorDetailText = TextBlock::New(114, 524, "", 18);
@@ -1119,11 +1118,12 @@ namespace inst::ui {
         this->Add(this->previewImage);
         for (auto& highlight : this->remoteGridSelectHighlights)
             this->Add(highlight);
+        // Keep focus behind cover art and selection marks for opaque theme colors.
+        this->Add(this->gridHighlight);
         for (auto& img : this->gridImages)
             this->Add(img);
         for (auto& icon : this->remoteGridSelectIcons)
             this->Add(icon);
-        this->Add(this->gridHighlight);
         this->Add(this->gridTitleText);
         this->Add(this->imageLoadingText);
         this->Add(this->listMarqueeMaskRect);
@@ -1961,9 +1961,10 @@ namespace inst::ui {
         int textY = rowY + ((itemHeight - this->listMarqueeOverlayText->GetTextHeight()) / 2);
         pu::ui::Color marqueeBaseColor = this->menu->GetColor();
         marqueeBaseColor.A = 255;
-        const pu::ui::Color marqueeHighlightColor = COLOR("#303030FF");
+        const pu::ui::Color marqueeHighlightColor = inst::theme::Color("highlight", COLOR("#303030FF"));
         const pu::ui::Color marqueeResolvedColor = BlendOverOpaque(marqueeBaseColor, marqueeHighlightColor);
         pu::ui::Color marqueeTextColor = ShouldUseDarkText(marqueeResolvedColor) ? COLOR("#000000FF") : COLOR("#FFFFFFFF");
+        marqueeTextColor = inst::theme::Color("selected_text", inst::theme::Color("text", marqueeTextColor));
         const pu::ui::Color currentMarqueeTextColor = this->listMarqueeOverlayText->GetColor();
         if (currentMarqueeTextColor.R != marqueeTextColor.R || currentMarqueeTextColor.G != marqueeTextColor.G
             || currentMarqueeTextColor.B != marqueeTextColor.B || currentMarqueeTextColor.A != marqueeTextColor.A) {
@@ -3096,7 +3097,7 @@ namespace inst::ui {
                 }
                 nsExit();
             }
-            this->previewImage->SetImage("romfs:/images/icons/title-placeholder.png");
+            this->previewImage->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
             applyPreviewLayout();
             this->previewImage->SetVisible(true);
             this->refreshImageLoadingText();
@@ -3128,7 +3129,7 @@ namespace inst::ui {
             this->refreshImageLoadingText();
         }
 
-        this->previewImage->SetImage("romfs:/images/icons/title-placeholder.png");
+        this->previewImage->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
         applyPreviewLayout();
         this->previewImage->SetVisible(true);
         this->refreshImageLoadingText();
@@ -3339,9 +3340,9 @@ namespace inst::ui {
             auto entry = pu::ui::elm::MenuItem::New(itm);
             entry->SetColor(COLOR("#FFFFFFFF"));
             if (!installedSection && !saveSyncSection && !cheatsSection) {
-                entry->SetIcon("romfs:/images/icons/checkbox-blank-outline.png");
+                entry->SetIcon(inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
                 if (!item.url.empty() && selectedUrls.find(item.url) != selectedUrls.end())
-                    entry->SetIcon("romfs:/images/icons/check-box-outline.png");
+                    entry->SetIcon(inst::theme::Asset("romfs:/images/icons/check-box-outline.png"));
             }
             this->menu->AddItem(entry);
         }
@@ -3410,8 +3411,8 @@ namespace inst::ui {
         for (std::size_t i = 0; i < count; i++) {
             const auto& item = this->visibleItems[i];
             const bool isSelected = !item.url.empty() && selectedUrls.find(item.url) != selectedUrls.end();
-            menuItems[i]->SetIcon(isSelected ? "romfs:/images/icons/check-box-outline.png"
-                                             : "romfs:/images/icons/checkbox-blank-outline.png");
+            menuItems[i]->SetIcon(isSelected ? inst::theme::Asset("romfs:/images/icons/check-box-outline.png")
+                                             : inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
         }
     }
 
@@ -3500,7 +3501,7 @@ namespace inst::ui {
                 }
 
                 if (!applied) {
-                    this->gridImages[i]->SetImage("romfs:/images/icons/title-placeholder.png");
+                    this->gridImages[i]->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
                     this->gridImages[i]->SetWidth(kGridTileWidth);
                     this->gridImages[i]->SetHeight(kGridTileHeight);
                 }
@@ -3608,7 +3609,7 @@ namespace inst::ui {
                 }
 
                 if (!applied) {
-                    this->gridImages[i]->SetImage("romfs:/images/icons/title-placeholder.png");
+                    this->gridImages[i]->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
                     this->gridImages[i]->SetWidth(kGridTileWidth);
                     this->gridImages[i]->SetHeight(kGridTileHeight);
                 }

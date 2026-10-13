@@ -257,7 +257,12 @@
         "generic_error": "Failed to install signature patches!"
     },
     "options": {
+        "theme_loading": "Applying theme…",
+        "theme_picker": "Select theme",
+        "theme_picker_hint": " Select theme     Back",
+        "theme_default": "Default",
         "menu_items": {
+            "theme": "Theme: ",
             "usb_hdd_hidden": "Show hidden files on USB drives",
             "ignore_firm": "Ignore minimum firmware version required by titles",
             "nca_verify": "Verify NCA signatures before installation",

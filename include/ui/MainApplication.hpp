@@ -2,6 +2,7 @@
 #include <pu/Plutonium>
 #include <switch.h>
 #include <atomic>
+#include <vector>
 #include "util/ui_dispatcher.hpp"
 #include "ui/mainPage.hpp"
 #include "ui/netInstPage.hpp"
@@ -23,6 +24,8 @@ namespace inst::ui {
             void Close();
             void OnLoad() override;
             void RefreshInputDevice(bool force = false);
+            void RecreateLayouts();
+            void RequestThemeReload();
             bool IsUiThread() const { return uiDispatcher.isOwner(); }
             bool IsInstallWorkActive() const { return installWorkActive.load(); }
             template<class F> auto RunOnUiThread(F fn) -> std::invoke_result_t<F> { return uiDispatcher.invoke(std::move(fn)); }
@@ -42,6 +45,15 @@ namespace inst::ui {
         private:
             inst::UiDispatcher uiDispatcher;
             std::atomic<bool> installWorkActive{false};
+            bool themeReloadPending = false;
+            int themeReloadStage = -1;
+            unsigned themeLoadingFrame = 0;
+            pu::ui::Layout::Ref themeLoadingLayout;
+            std::vector<pu::ui::elm::Rectangle::Ref> themeLoadingDots;
+            pu::ui::elm::Rectangle::Ref themeLoadingProgress;
+            void CreateLayoutStep(int step);
+            void ShowThemeLoading();
+            void ApplyPendingTheme();
             AppletFocusState lastFocusState = AppletFocusState_InFocus;
     };
 }

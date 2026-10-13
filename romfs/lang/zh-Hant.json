@@ -251,7 +251,12 @@
     "generic_error": "安裝簽名修補程式失敗！"
   },
   "options": {
+    "theme_loading": "正在套用主題…",
+    "theme_picker": "選擇主題",
+    "theme_picker_hint": " 選擇主題     返回",
+    "theme_default": "預設",
     "menu_items": {
+      "theme": "主題：",
       "usb_hdd_hidden": "顯示 USB 磁碟上的隱藏檔案",
       "ignore_firm": "略過檢查遊戲最低系統版本要求",
       "nca_verify": "進行安裝前驗證NCA簽名",

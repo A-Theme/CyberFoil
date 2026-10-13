@@ -251,7 +251,12 @@
     "generic_error": "Installation der Signatur Patches fehlgeschlagen!"
   },
   "options": {
+    "theme_loading": "Design wird angewendet…",
+    "theme_picker": "Design auswählen",
+    "theme_picker_hint": " Design wählen     Zurück",
+    "theme_default": "Standard",
     "menu_items": {
+      "theme": "Design: ",
       "usb_hdd_hidden": "Versteckte Dateien auf USB-Laufwerken anzeigen",
       "ignore_firm": "Ignoriere minimale Firmware Version des Titels",
       "nca_verify": "Verifiziere NCA Signatur vor der Installation",

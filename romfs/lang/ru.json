@@ -251,7 +251,12 @@
     "generic_error": "Не удалось установить signature patches!"
   },
   "options": {
+    "theme_loading": "Применение темы…",
+    "theme_picker": "Выбрать тему",
+    "theme_picker_hint": " Выбрать тему     Назад",
+    "theme_default": "Стандартная",
     "menu_items": {
+      "theme": "Тема: ",
       "usb_hdd_hidden": "Показывать скрытые файлы на USB-накопителях",
       "ignore_firm": "Игнорировать требования игр о минимальной версии прошивки",
       "nca_verify": "Проверять подписи NCA перед установкой",

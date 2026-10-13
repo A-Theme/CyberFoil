@@ -29,6 +29,7 @@ namespace inst::config {
     bool oledMode;
     bool mtpExposeAlbum;
     bool usbHddShowHiddenFiles = false;
+    std::string themeFile = "theme.json";
     bool ignoreReqVers;
     bool overClock;
     bool usbAck;
@@ -909,6 +910,7 @@ namespace inst::config {
             {"oledMode", oledMode},
             {"mtpExposeAlbum", mtpExposeAlbum},
             {"usbHddShowHiddenFiles", usbHddShowHiddenFiles},
+            {"themeFile", themeFile},
             {"ignoreReqVers", ignoreReqVers},
             {"languageSetting", languageSetting},
             {"overClock", overClock},
@@ -947,6 +949,7 @@ namespace inst::config {
         oledMode = true;
         mtpExposeAlbum = false;
         usbHddShowHiddenFiles = false;
+        themeFile = "theme.json";
         ignoreReqVers = true;
         overClock = true;
         usbAck = false;
@@ -984,6 +987,7 @@ namespace inst::config {
             if (j.contains("oledMode")) oledMode = j["oledMode"].get<bool>();
             if (j.contains("mtpExposeAlbum")) mtpExposeAlbum = j["mtpExposeAlbum"].get<bool>();
             if (j.contains("usbHddShowHiddenFiles")) usbHddShowHiddenFiles = j["usbHddShowHiddenFiles"].get<bool>();
+            if (j.contains("themeFile") && j["themeFile"].is_string()) themeFile = j["themeFile"].get<std::string>();
             if (j.contains("ignoreReqVers")) ignoreReqVers = j["ignoreReqVers"].get<bool>();
             if (j.contains("languageSetting")) languageSetting = j["languageSetting"].get<int>();
             if (j.contains("overClock")) overClock = j["overClock"].get<bool>();
@@ -1018,6 +1022,7 @@ namespace inst::config {
                 "oledMode",
                 "mtpExposeAlbum",
                 "usbHddShowHiddenFiles",
+                "themeFile",
                 "ignoreReqVers",
                 "languageSetting",
                 "overClock",

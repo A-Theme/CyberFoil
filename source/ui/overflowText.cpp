@@ -2,6 +2,7 @@
 #include <SDL2/SDL.h>
 #include <switch.h>
 #include "ui/overflowText.hpp"
+#include "util/theme.hpp"
 
 namespace {
     constexpr int kMarqueeStartDelayMs = 2000;
@@ -143,6 +144,11 @@ void OverflowText::SetSelected(bool selected, bool forceReset)
 {
     const bool changed = (this->selected != selected);
     this->selected = selected;
+    if (changed || forceReset) {
+        const auto color = selected ? inst::theme::Color("selected_text", this->textColor) : this->textColor;
+        this->baseText->SetColor(color);
+        this->marqueeText->SetColor(color);
+    }
     if (changed || forceReset)
         this->Update(true);
 }

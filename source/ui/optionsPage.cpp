@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
@@ -17,7 +18,9 @@
 #include "remoteInstall.hpp"
 #include "ui/bottomHint.hpp"
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 
 namespace inst::ui {
     extern MainApplication *mainApp;
@@ -26,12 +29,12 @@ namespace inst::ui {
 
     namespace {
         // Keep the form highlight in place while its dropdown handles input.
-        class RemoteFormMenu final : public Menu {
+        class RemoteFormMenu final : public inst::theme::Menu {
         public:
             explicit RemoteFormMenu(bool& dropdownVisible)
-                : Menu(260, 152, 760, COLOR("#00000000"), 44, 10, 22), dropdownVisible(dropdownVisible) {}
+                : inst::theme::Menu(260, 152, 760, COLOR("#00000000"), 44, 10, 22), dropdownVisible(dropdownVisible) {}
             void OnInput(u64 down, u64 up, u64 held, pu::ui::Touch pos) override {
-                if (!dropdownVisible) Menu::OnInput(down, up, held, pos);
+                if (!dropdownVisible) inst::theme::Menu::OnInput(down, up, held, pos);
             }
         private:
             bool& dropdownVisible;
@@ -237,28 +240,25 @@ namespace inst::ui {
             inst::config::setConfig();
         }
 
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto infoColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto infoColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->infoRect = Rectangle::New(0, 75, 1280, 60, infoColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         this->sideNavRect = Rectangle::New(0, 136, 300, 523, inst::config::oledMode ? COLOR("#FFFFFF18") : COLOR("#170909A0"));
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -289,13 +289,13 @@ namespace inst::ui {
         this->butText = TextBlock::New(10, 678, optionsHintText, 20);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
         this->bottomHintSegments = BuildBottomHintSegments(optionsHintText, 10, 20);
-        this->menu = pu::ui::elm::Menu::New(301, 136, 979, COLOR("#FFFFFF00"), 72, (506 / 72), 20);
+        this->menu = inst::theme::Menu::New(301, 136, 979, COLOR("#FFFFFF00"), 72, (506 / 72), 20);
         if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->menu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->menu->SetOnFocusColor(COLOR("#00000033"));
-            this->menu->SetScrollbarColor(COLOR("#17090980"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
         this->Add(this->topRect);
         this->Add(this->infoRect);
@@ -341,7 +341,8 @@ namespace inst::ui {
         this->remoteFormTitle = TextBlock::New(270, 104, "Remote", 32);
         this->remoteFormHint = TextBlock::New(270, 614, " Edit/Select     Cancel", 20);
         this->remoteFormMenu = std::make_shared<RemoteFormMenu>(this->remoteFormLanProtocolDropdownVisible);
-        this->remoteFormMenu->SetOnFocusColor(inst::config::oledMode ? COLOR("#FFFFFF33") : COLOR("#00000070"));
+        this->remoteFormMenu->SetOnFocusColor(inst::theme::Color("highlight",
+            inst::config::oledMode ? COLOR("#FFFFFF33") : COLOR("#00000070")));
         this->remoteFormTitle->SetColor(COLOR("#FFFFFFFF"));
         this->remoteFormHint->SetColor(COLOR("#FFFFFFFF"));
         this->remoteFormShade->SetVisible(false);
@@ -365,8 +366,8 @@ namespace inst::ui {
         }
         this->remoteFormLanProtocolPanel = Rectangle::New(502, 192, 310, 104,
             inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
-        this->remoteFormLanProtocolMenu = Menu::New(510, 200, 294, COLOR("#00000000"), 44, 2, 22);
-        this->remoteFormLanProtocolMenu->SetOnFocusColor(COLOR("#FFFFFF33"));
+        this->remoteFormLanProtocolMenu = inst::theme::Menu::New(510, 200, 294, COLOR("#00000000"), 44, 2, 22);
+        this->remoteFormLanProtocolMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
         for (const char* label : {"HTTP", "HTTPS"}) {
             auto item = MenuItem::New(label);
             item->SetColor(COLOR("#FFFFFFFF"));
@@ -381,8 +382,8 @@ namespace inst::ui {
         this->Add(this->remoteFormLanProtocolPanel);
         this->Add(this->remoteFormLanProtocolMenu);
 
-        this->discoveryMenu = Menu::New(310, 140, 950, COLOR("#00000000"), 80, 5, 20);
-        this->discoveryMenu->SetOnFocusColor(COLOR("#FFFFFF33"));
+        this->discoveryMenu = inst::theme::Menu::New(310, 140, 950, COLOR("#00000000"), 80, 5, 20);
+        this->discoveryMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
         this->discoveryStatus = TextBlock::New(320, 554, "", 20);
         this->discoveryStatus->SetColor(COLOR("#FFFFFFFF"));
         this->discoverySpinner = TextBlock::New(740, 320, "●···", 48);
@@ -588,8 +589,8 @@ namespace inst::ui {
     }
 
     std::string optionsPage::getMenuOptionIcon(bool ourBool) {
-        if(ourBool) return "romfs:/images/icons/check-box-outline.png";
-        else return "romfs:/images/icons/checkbox-blank-outline.png";
+        if(ourBool) return inst::theme::Asset("romfs:/images/icons/check-box-outline.png");
+        else return inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png");
     }
 
     std::string optionsPage::getMenuLanguage(int ourLangCode) {
@@ -626,23 +627,30 @@ namespace inst::ui {
 
     void optionsPage::setSectionNavText() {
         static const std::vector<std::string> sectionLabels = {"General", "Remote", "System"};
+        const bool customHighlight = inst::theme::HasColor("highlight") || inst::theme::HasColor("accent");
         for (size_t i = 0; i < this->sectionTexts.size() && i < sectionLabels.size(); i++) {
             const bool selected = static_cast<int>(i) == this->selectedSection;
-            this->sectionHighlights[i]->SetColor(selected
-                ? (this->tabsFocused
+            auto sectionColor = selected
+                ? inst::theme::Color("highlight", this->tabsFocused
                     ? (inst::config::oledMode ? COLOR("#FFFFFF55") : COLOR("#FFFFFF66"))
                     : (inst::config::oledMode ? COLOR("#FFFFFF33") : COLOR("#FFFFFF40")))
-                : COLOR("#FFFFFF00"));
+                : COLOR("#FFFFFF00");
+            if (selected && customHighlight && !this->tabsFocused) sectionColor.A /= 4;
+            this->sectionHighlights[i]->SetColor(sectionColor);
             this->sectionTexts[i]->SetText(sectionLabels[i]);
-            this->sectionTexts[i]->SetColor(selected ? COLOR("#FFFFFFFF") : (this->tabsFocused ? COLOR("#FFFFFFCC") : COLOR("#FFFFFF99")));
+            this->sectionTexts[i]->SetColor(selected && this->tabsFocused
+                ? inst::theme::Color("selected_text", COLOR("#FFFFFFFF"))
+                : (selected ? COLOR("#FFFFFFFF") : (this->tabsFocused ? COLOR("#FFFFFFCC") : COLOR("#FFFFFF99"))));
         }
 
         // Make the settings-list row highlight clearly reflect which area is active.
-        if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(this->tabsFocused ? COLOR("#FFFFFF18") : COLOR("#FFFFFF66"));
-        } else {
-            this->menu->SetOnFocusColor(this->tabsFocused ? COLOR("#00000022") : COLOR("#00000070"));
+        auto rowColor = inst::theme::Color("highlight",
+            inst::config::oledMode ? COLOR("#FFFFFF66") : COLOR("#00000070"));
+        if (this->tabsFocused) {
+            if (customHighlight) rowColor.A /= 4;
+            else rowColor = inst::config::oledMode ? COLOR("#FFFFFF18") : COLOR("#00000022");
         }
+        this->menu->SetOnFocusColor(rowColor);
     }
 
     void optionsPage::setSettingsMenuText() {
@@ -700,6 +708,11 @@ namespace inst::ui {
         addItem("options.menu_items.language"_lang + this->getMenuLanguage(inst::config::languageSetting), false, false);
         addItem("options.menu_items.check_update"_lang, false, false);
         addItem("options.menu_items.credits"_lang, false, false);
+        std::string themeName = inst::config::themeFile.empty() ? "options.theme_default"_lang : inst::theme::Name();
+        for (const auto& choice : inst::theme::Discover(inst::config::appDir)) {
+            if (choice.file == inst::config::themeFile) { themeName = choice.name; break; }
+        }
+        addItem("options.menu_items.theme"_lang + themeName, false, false);
     }
 
     void optionsPage::refreshOptions(bool resetSelection) {
@@ -707,6 +720,82 @@ namespace inst::ui {
         this->setSectionNavText();
         this->setSettingsMenuText();
         if (resetSelection) this->menu->SetSelectedIndex(0);
+    }
+
+    void optionsPage::ShowThemePicker() {
+        this->selectedSection = 2;
+        this->openThemeList();
+    }
+
+    void optionsPage::openThemeList() {
+        this->themeChoices = inst::theme::Discover(inst::config::appDir);
+        this->themeChoices.insert(this->themeChoices.begin(), {"", "options.theme_default"_lang});
+        this->themeListVisible = true;
+        this->tabsFocused = false;
+        this->touchActive = false;
+        this->touchMoved = false;
+        this->bottomHintTouch = {};
+        this->pageInfoText->SetText("options.theme_picker"_lang);
+        const auto hint = "options.theme_picker_hint"_lang;
+        this->butText->SetText(hint);
+        this->bottomHintSegments = BuildBottomHintSegments(hint, 10, 20);
+        this->menu->ClearItems();
+        int selected = 0;
+        for (std::size_t i = 0; i < this->themeChoices.size(); ++i) {
+            const auto& choice = this->themeChoices[i];
+            const bool active = choice.file == inst::config::themeFile;
+            std::string label = choice.name;
+            if (!choice.file.empty()) label += " (" + choice.file + ")";
+            auto item = MenuItem::New(inst::util::shortenString(label, 70, false));
+            item->SetColor(COLOR("#FFFFFFFF"));
+            item->SetIcon(this->getMenuOptionIcon(active));
+            this->menu->AddItem(item);
+            if (active) selected = static_cast<int>(i);
+        }
+        this->menu->SetSelectedIndex(selected);
+        this->setSectionNavText();
+    }
+
+    void optionsPage::closeThemeList() {
+        this->themeListVisible = false;
+        this->touchActive = false;
+        this->bottomHintTouch = {};
+        this->pageInfoText->SetText("options.title"_lang);
+        const std::string hint = " Select/Change    / Section     Back";
+        this->butText->SetText(hint);
+        this->bottomHintSegments = BuildBottomHintSegments(hint, 10, 20);
+        this->refreshOptions();
+        this->menu->SetSelectedIndex(5);
+        this->lockedMenuIndex = 5;
+    }
+
+    void optionsPage::handleThemeListInput(u64 down, pu::ui::Touch pos) {
+        if (down & HidNpadButton_B) { this->closeThemeList(); return; }
+        bool tapped = false;
+        if (!pos.IsEmpty()) {
+            if (!this->touchActive) {
+                this->touchActive = true;
+                this->touchMoved = false;
+                this->touchStartX = pos.X;
+                this->touchStartY = pos.Y;
+                const int x = this->menu->GetProcessedX(), y = this->menu->GetProcessedY();
+                this->touchRegion = pos.X >= x && pos.X <= x + this->menu->GetWidth() &&
+                    pos.Y >= y && pos.Y <= y + this->menu->GetHeight() ? 2 : 0;
+            } else if (std::abs(pos.X - this->touchStartX) > 12 || std::abs(pos.Y - this->touchStartY) > 12) {
+                this->touchMoved = true;
+            }
+        } else if (this->touchActive) {
+            tapped = !this->touchMoved && this->touchRegion == 2;
+            this->touchActive = false;
+        }
+        if ((down & HidNpadButton_A) || tapped) {
+            const int index = this->menu->GetSelectedIndex();
+            if (index < 0 || index >= static_cast<int>(this->themeChoices.size())) return;
+            const auto choice = this->themeChoices[index];
+            inst::config::themeFile = choice.file;
+            inst::config::setConfig();
+            mainApp->RequestThemeReload();
+        }
     }
 
     void optionsPage::openRemoteList(int selectedIndex) {
@@ -1066,6 +1155,10 @@ namespace inst::ui {
             Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);
         }
         inst::util::playNavigationClickIfNeeded(Down);
+        if (this->themeListVisible) {
+            this->handleThemeListInput(Down, Pos);
+            return;
+        }
         if (this->discoveryVisible) {
             this->updateDiscovery(Down);
             return;
@@ -1202,11 +1295,14 @@ namespace inst::ui {
                 if ((selectedIndex < 0) || (selectedIndex >= static_cast<int>(sizeof(kRemoteMap) / sizeof(kRemoteMap[0])))) return;
                 selectedIndex = kRemoteMap[selectedIndex];
             } else {
-                static const int kSystemMap[] = {4, 5, 16, 17, 18};
+                static const int kSystemMap[] = {4, 5, 16, 17, 18, 30};
                 if ((selectedIndex < 0) || (selectedIndex >= static_cast<int>(sizeof(kSystemMap) / sizeof(kSystemMap[0])))) return;
                 selectedIndex = kSystemMap[selectedIndex];
             }
             switch (selectedIndex) {
+                case 30:
+                    this->openThemeList();
+                    break;
                 case 29:
                     inst::config::usbHddShowHiddenFiles = !inst::config::usbHddShowHiddenFiles;
                     inst::config::setConfig();
@@ -1299,20 +1395,7 @@ namespace inst::ui {
                     inst::config::setConfig();
                     {
                         auto keepAlive = mainApp->optionspage;
-                        mainApp->mainPage = MainPage::New();
-                        mainApp->instpage = instPage::New();
-                        mainApp->sdinstPage = sdInstPage::New();
-                        mainApp->netinstPage = netInstPage::New();
-                        mainApp->usbinstPage = usbInstPage::New();
-                        mainApp->remoteinstPage = remoteInstPage::New();
-                        mainApp->optionspage = optionsPage::New();
-                        mainApp->mainPage->SetOnInput(std::bind(&MainPage::onInput, mainApp->mainPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->netinstPage->SetOnInput(std::bind(&netInstPage::onInput, mainApp->netinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->remoteinstPage->SetOnInput(std::bind(&remoteInstPage::onInput, mainApp->remoteinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->sdinstPage->SetOnInput(std::bind(&sdInstPage::onInput, mainApp->sdinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->usbinstPage->SetOnInput(std::bind(&usbInstPage::onInput, mainApp->usbinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->instpage->SetOnInput(std::bind(&instPage::onInput, mainApp->instpage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->optionspage->SetOnInput(std::bind(&optionsPage::onInput, mainApp->optionspage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+                        mainApp->RecreateLayouts();
                         mainApp->LoadLayout(mainApp->optionspage);
                     }
                     break;

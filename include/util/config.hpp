@@ -44,6 +44,7 @@ namespace inst::config {
     extern bool oledMode;
     extern bool mtpExposeAlbum;
     extern bool usbHddShowHiddenFiles;
+    extern std::string themeFile;
     extern bool usbAck;
     extern bool remoteHideInstalled;
     extern bool remoteHideInstalledSection;

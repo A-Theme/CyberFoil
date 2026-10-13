@@ -251,7 +251,12 @@
     "generic_error": "서명 패치를 설치하지 못했습니다!"
   },
   "options": {
+    "theme_loading": "테마 적용 중…",
+    "theme_picker": "테마 선택",
+    "theme_picker_hint": " 테마 선택     뒤로",
+    "theme_default": "기본",
     "menu_items": {
+      "theme": "테마: ",
       "usb_hdd_hidden": "USB 드라이브의 숨김 파일 표시",
       "ignore_firm": "타이틀에 필요한 최소 펌웨어 버전 무시",
       "nca_verify": "설치 전에 NCA 서명 확인",

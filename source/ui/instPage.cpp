@@ -15,7 +15,9 @@
 #include "ui/bottomHint.hpp"
 #include <switch.h>
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 
 namespace inst::ui {
     extern MainApplication *mainApp;
@@ -163,27 +165,24 @@ namespace inst::ui {
     }
 
     instPage::instPage() : Layout::Layout() {
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto infoColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto infoColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->infoRect = Rectangle::New(0, 75, 1280, 60, infoColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -227,8 +226,8 @@ namespace inst::ui {
         this->progressDetailText->SetColor(COLOR("#FFFFFFFF"));
         this->progressDetailText->SetVisible(false);
         if (std::filesystem::exists(inst::config::appDir + "/awoo_inst.png")) this->awooImage = Image::New(410, 190, inst::config::appDir + "/awoo_inst.png");
-        else this->awooImage = Image::New(510, 166, "romfs:/images/awoos/7d8a05cddfef6da4901b20d2698d5a71.png");
-        this->installIconImage = Image::New(kInstallIconX, kInstallIconY, "romfs:/images/awoos/7d8a05cddfef6da4901b20d2698d5a71.png");
+        else this->awooImage = Image::New(510, 166, inst::theme::Asset("romfs:/images/awoos/7d8a05cddfef6da4901b20d2698d5a71.png"));
+        this->installIconImage = Image::New(kInstallIconX, kInstallIconY, inst::theme::Asset("romfs:/images/awoos/7d8a05cddfef6da4901b20d2698d5a71.png"));
         this->installIconImage->SetWidth(kInstallIconSize);
         this->installIconImage->SetHeight(kInstallIconSize);
         this->installIconImage->SetVisible(false);
@@ -285,7 +284,7 @@ namespace inst::ui {
             auto row = Rectangle::New(540, y, 700, 56, COLOR("#222228FF"), 8);
             addQueueElement(row); this->queueRows.push_back(row);
             this->queueRowNumbers.push_back(queueLabel(552, y + 18, "", 16, COLOR("#A8A8B8FF")));
-            auto icon = Image::New(600, y + 6, "romfs:/images/icons/title-placeholder.png");
+            auto icon = Image::New(600, y + 6, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
             icon->SetWidth(44); icon->SetHeight(44); addQueueElement(icon);
             this->queueRowIcons.push_back(icon); this->queueRowIconPaths.push_back("");
             this->queueRowEntryIds.push_back(std::numeric_limits<size_t>::max()); this->queueRowIconLoaded.push_back(false);
@@ -370,7 +369,7 @@ namespace inst::ui {
 
     void instPage::clearInstallIcon() {
         if (!mainApp->IsUiThread()) { mainApp->RunOnUiThread([] { clearInstallIcon(); }); return; }
-        if (mainApp->instpage->HasQueuePresentation()) { setInstallIcon("romfs:/images/icons/title-placeholder.png"); return; }
+        if (mainApp->instpage->HasQueuePresentation()) { setInstallIcon(inst::theme::Asset("romfs:/images/icons/title-placeholder.png")); return; }
         mainApp->instpage->installIconImage->SetVisible(false);
         mainApp->instpage->awooImage->SetVisible(!inst::config::gayMode); mainApp->CallForRender();
     }
@@ -433,7 +432,7 @@ namespace inst::ui {
         page->installInfoText->SetX(48); page->installInfoText->SetY(491); page->installInfoText->SetFontSize(16);
         page->installBar->SetX(48); page->installBar->SetY(554); page->installBar->SetWidth(432); page->installBar->SetHeight(18);
         page->progressDetailText->SetX(48); page->progressDetailText->SetY(587); page->progressDetailText->SetFontSize(16);
-        page->awooImage->SetVisible(false); setInstallIcon("romfs:/images/icons/title-placeholder.png"); page->refreshQueue();
+        page->awooImage->SetVisible(false); setInstallIcon(inst::theme::Asset("romfs:/images/icons/title-placeholder.png")); page->refreshQueue();
     }
 
     bool instPage::canEnqueueTitle(const std::string& key) {
@@ -517,7 +516,8 @@ namespace inst::ui {
                 if (!visible) continue;
                 const size_t position = first + row; const auto& entry = queueEntries[pending[position]];
                 const bool selected = position == queueSelection;
-                queueRows[row]->SetColor(selected ? COLOR("#542329FF") : COLOR("#222228FF"));
+                queueRows[row]->SetColor(selected ? inst::theme::Color("highlight", COLOR("#542329FF")) : COLOR("#222228FF"));
+                queueRowTitles[row]->SetColor(selected ? inst::theme::Color("selected_text", COLOR("#FFFFFFFF")) : COLOR("#FFFFFFFF"));
                 queueRowNumbers[row]->SetText(std::to_string(position + 1)); FitQueueText(queueRowTitles[row], entry.name, 454);
                 FitQueueText(queueRowDetails[row], (position == 0 ? "Next to install  •  " : "Waiting  •  ") + entry.detail, 454);
                 queueRowActions[row]->SetText(selected ? " Remove" : "");
@@ -554,7 +554,7 @@ namespace inst::ui {
             }
         }
         if (!queueRowIconLoaded[row]) {
-            const std::string placeholder = "romfs:/images/icons/title-placeholder.png";
+            const std::string placeholder = inst::theme::Asset("romfs:/images/icons/title-placeholder.png");
             if (queueRowIconPaths[row] != placeholder) { image->SetImage(placeholder); queueRowIconPaths[row] = placeholder; }
             mainApp->remoteinstPage->queueInstallIcon(entry.key, entry.iconUrl, entry.iconPath);
         }

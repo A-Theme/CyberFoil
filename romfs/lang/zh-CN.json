@@ -251,7 +251,12 @@
     "generic_error": "安装签名补丁失败！"
   },
   "options": {
+    "theme_loading": "正在应用主题…",
+    "theme_picker": "选择主题",
+    "theme_picker_hint": " 选择主题     返回",
+    "theme_default": "默认",
     "menu_items": {
+      "theme": "主题：",
       "usb_hdd_hidden": "显示 USB 驱动器上的隐藏文件",
       "ignore_firm": "忽略游戏最低固件版本要求",
       "nca_verify": "安装前验证 NCA 签名",

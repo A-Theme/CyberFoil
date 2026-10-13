@@ -251,7 +251,12 @@
     "generic_error": "Impossibile installare le SigPatches!"
   },
   "options": {
+    "theme_loading": "Applicazione del tema…",
+    "theme_picker": "Seleziona tema",
+    "theme_picker_hint": " Scegli tema     Indietro",
+    "theme_default": "Predefinito",
     "menu_items": {
+      "theme": "Tema: ",
       "usb_hdd_hidden": "Mostra file nascosti nelle unità USB",
       "ignore_firm": "Ignora la versione minima del firmware richiesta dai titoli",
       "nca_verify": "Verifica le firme NCA prima dell'installazione",
