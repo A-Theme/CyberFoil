@@ -167,6 +167,8 @@
       "delete_info": " installé ! Le supprimer du disque USB ?",
       "delete_info_multi": " fichiers installés avec succès ! Les supprimer du disque USB ?",
       "delete_desc": "Les fichiers originaux ne sont plus nécessaires après installation",
+      "show_hidden": "Afficher cachés",
+      "hide_hidden": "Masquer cachés",
       "buttons": " Sélectionner un fichier     Tout sélectionner     Installer le(s) fichier(s)     Aide     Annuler"
     },
     "usb": {
@@ -255,7 +257,13 @@
     "generic_error": "Echec de l'installation des sigpatches !"
   },
   "options": {
+    "theme_loading": "Application du thème…",
+    "theme_picker": "Choisir un thème",
+    "theme_picker_hint": " Choisir le thème     Retour",
+    "theme_default": "Par défaut",
     "menu_items": {
+      "theme": "Thème : ",
+      "usb_hdd_hidden": "Afficher les fichiers cachés sur les lecteurs USB",
       "ignore_firm": "Ignorez la version minimale de firmware requise par les jeux",
       "nca_verify": "Vérifier les signatures des NCA avant l'installation",
       "boost_mode": "Activer le  \"boost mode\" pendant l'installation",

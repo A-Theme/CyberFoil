@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include "ui/MainApplication.hpp"
 #include "ui/mainPage.hpp"
@@ -8,7 +10,9 @@
 #include "util/lang.hpp"
 #include "ui/bottomHint.hpp"
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 
 namespace inst::ui {
     extern MainApplication *mainApp;
@@ -25,27 +29,24 @@ namespace inst::ui {
     }
 
     hddInstPage::hddInstPage() : Layout::Layout() {
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto infoColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto infoColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->infoRect = Rectangle::New(0, 75, 1280, 60, infoColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -74,14 +75,14 @@ namespace inst::ui {
         this->pageInfoText->SetColor(COLOR("#FFFFFFFF"));
         this->butText = TextBlock::New(10, 678, "inst.hdd.buttons"_lang, 20);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
-        this->bottomHintSegments = BuildBottomHintSegments("inst.hdd.buttons"_lang, 10, 20);
-        this->menu = pu::ui::elm::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 50, 10);
+        this->refreshBottomHint();
+        this->menu = inst::theme::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 50, 10);
         if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->menu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->menu->SetOnFocusColor(COLOR("#00000033"));
-            this->menu->SetScrollbarColor(COLOR("#17090980"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
         this->Add(this->topRect);
         this->Add(this->infoRect);
@@ -110,7 +111,23 @@ namespace inst::ui {
         this->Add(this->menu);
     }
 
+    void hddInstPage::refreshBottomHint() {
+        const std::string base = queueAddMode
+            ? " Select     Add to queue     Queue"
+            : "inst.hdd.buttons"_lang;
+        const std::string action = inst::config::usbHddShowHiddenFiles
+            ? "inst.hdd.hide_hidden"_lang : "inst.hdd.show_hidden"_lang;
+        this->butText->SetText(base + "     " + action);
+        int fontSize = 20;
+        this->butText->SetFontSize(fontSize);
+        while (fontSize > 14 && this->butText->GetTextWidth() > 1260) {
+            this->butText->SetFontSize(--fontSize);
+        }
+        this->bottomHintSegments = BuildBottomHintSegments(this->butText->GetText(), 10, fontSize);
+    }
+
     void hddInstPage::drawMenuItems(bool clearItems, std::filesystem::path ourPath) {
+        this->refreshBottomHint();
         if (clearItems) this->selectedTitles = {};
         const auto normalizedPath = normalizeRootPath(ourPath);
         const auto normalizedParent = normalizeRootPath(normalizedPath.parent_path());
@@ -127,11 +144,30 @@ namespace inst::ui {
             this->drawMenuItems(false, this->currentDir.parent_path());
             return;
         }
+        if (!inst::config::usbHddShowHiddenFiles) {
+            const auto hidden = [](const std::filesystem::path& path) {
+                auto name = path.filename().string();
+                if (!name.empty() && name.front() == '.') return true;
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+                    return static_cast<char>(std::tolower(ch));
+                });
+                return name == "$recycle.bin" || name == "system volume information" ||
+                    name == "desktop.ini" || name == "thumbs.db";
+            };
+            const auto removeHidden = [&](auto& paths) {
+                paths.erase(std::remove_if(paths.begin(), paths.end(), hidden), paths.end());
+            };
+            removeHidden(this->ourDirectories);
+            removeHidden(this->ourFiles);
+            // Hidden selections must not remain queued for a later install.
+            removeHidden(this->selectedTitles);
+            removeHidden(this->queueSavedSelection);
+        }
         if (this->currentDir != this->rootDir) {
             std::string itm = "..";
             auto ourEntry = pu::ui::elm::MenuItem::New(itm);
             ourEntry->SetColor(COLOR("#FFFFFFFF"));
-            ourEntry->SetIcon("romfs:/images/icons/folder-upload.png");
+            ourEntry->SetIcon(inst::theme::Asset("romfs:/images/icons/folder-upload.png"));
             this->menu->AddItem(ourEntry);
         }
         for (auto& file: this->ourDirectories) {
@@ -139,17 +175,17 @@ namespace inst::ui {
             std::string itm = file.filename().string();
             auto ourEntry = pu::ui::elm::MenuItem::New(itm);
             ourEntry->SetColor(COLOR("#FFFFFFFF"));
-            ourEntry->SetIcon("romfs:/images/icons/folder.png");
+            ourEntry->SetIcon(inst::theme::Asset("romfs:/images/icons/folder.png"));
             this->menu->AddItem(ourEntry);
         }
         for (auto& file: this->ourFiles) {
             std::string itm = file.filename().string();
             auto ourEntry = pu::ui::elm::MenuItem::New(itm);
             ourEntry->SetColor(COLOR("#FFFFFFFF"));
-            ourEntry->SetIcon("romfs:/images/icons/checkbox-blank-outline.png");
+            ourEntry->SetIcon(inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
             for (long unsigned int i = 0; i < this->selectedTitles.size(); i++) {
                 if (this->selectedTitles[i] == file) {
-                    ourEntry->SetIcon("romfs:/images/icons/check-box-outline.png");
+                    ourEntry->SetIcon(inst::theme::Asset("romfs:/images/icons/check-box-outline.png"));
                 }
             }
             this->menu->AddItem(ourEntry);
@@ -157,6 +193,7 @@ namespace inst::ui {
     }
 
     void hddInstPage::followDirectory() {
+        if (queueAddMode) return;
         int selectedIndex = this->menu->GetSelectedIndex();
         int dirListSize = this->ourDirectories.size();
         if (this->currentDir != this->rootDir) {
@@ -174,13 +211,18 @@ namespace inst::ui {
     }
 
     void hddInstPage::selectNsp(int selectedIndex) {
+        if (selectedIndex < 0 || selectedIndex >= static_cast<int>(this->menu->GetItems().size())) return;
+        if (queueAddMode) {
+            int fileIndex = selectedIndex - static_cast<int>(ourDirectories.size()) - (currentDir != rootDir ? 1 : 0);
+            if (fileIndex < 0 || fileIndex >= static_cast<int>(ourFiles.size()) || !instPage::canEnqueueTitle(ourFiles[fileIndex].string())) return;
+        }
         int dirListSize = this->ourDirectories.size();
         if (this->currentDir != this->rootDir) dirListSize++;
-        if (this->menu->GetItems()[selectedIndex]->GetIcon() == "romfs:/images/icons/check-box-outline.png") {
+        if (this->menu->GetItems()[selectedIndex]->GetIcon() == inst::theme::Asset("romfs:/images/icons/check-box-outline.png")) {
             for (long unsigned int i = 0; i < this->selectedTitles.size(); i++) {
                 if (this->selectedTitles[i] == this->ourFiles[selectedIndex - dirListSize]) this->selectedTitles.erase(this->selectedTitles.begin() + i);
             }
-        } else if (this->menu->GetItems()[selectedIndex]->GetIcon() == "romfs:/images/icons/checkbox-blank-outline.png") this->selectedTitles.push_back(this->ourFiles[selectedIndex - dirListSize]);
+        } else if (this->menu->GetItems()[selectedIndex]->GetIcon() == inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png")) this->selectedTitles.push_back(this->ourFiles[selectedIndex - dirListSize]);
         else {
             this->followDirectory();
             return;
@@ -188,13 +230,34 @@ namespace inst::ui {
         this->drawMenuItems(false, currentDir);
     }
 
+    void hddInstPage::beginQueueAddMode() {
+        queueSavedSelection = selectedTitles; selectedTitles.clear(); queueAddMode = true;
+        touchTapActive = false; hasLastTap = false; bottomHintTouch = {};
+        drawMenuItems(false, currentDir);
+        refreshBottomHint();
+        mainApp->LoadLayout(mainApp->hddinstPage);
+    }
+
+    void hddInstPage::endQueueAddMode() {
+        if (!queueAddMode) return;
+        queueAddMode = false; selectedTitles = std::move(queueSavedSelection);
+        touchTapActive = false; hasLastTap = false; bottomHintTouch = {};
+        refreshBottomHint();
+    }
+
     void hddInstPage::startInstall() {
+        if (queueAddMode) {
+            std::vector<std::string> keys;
+            for (const auto& path : selectedTitles) keys.push_back(path.string());
+            instPage::enqueueTitles(keys);
+            selectedTitles.clear(); instPage::showQueue(); return;
+        }
         int dialogResult = -1;
         if (this->selectedTitles.size() == 1) {
             dialogResult = mainApp->CreateShowDialog("inst.target.desc0"_lang + inst::util::shortenString(std::filesystem::path(this->selectedTitles[0]).filename().string(), 32, true) + "inst.target.desc1"_lang, "common.cancel_desc"_lang, {"inst.target.opt0"_lang, "inst.target.opt1"_lang}, false);
         } else dialogResult = mainApp->CreateShowDialog("inst.target.desc00"_lang + std::to_string(this->selectedTitles.size()) + "inst.target.desc01"_lang, "common.cancel_desc"_lang, {"inst.target.opt0"_lang, "inst.target.opt1"_lang}, false);
         if (dialogResult == -1) return;
-        hddInstStuff::installNspFromFile(this->selectedTitles, dialogResult);
+        hddInstStuff::installNspFromFile(this->selectedTitles, dialogResult, this->ourFiles);
     }
 
     void hddInstPage::onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos) {
@@ -204,6 +267,21 @@ namespace inst::ui {
             Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);
         }
         inst::util::playNavigationClickIfNeeded(Down);
+        if (Down & HidNpadButton_Minus) {
+            inst::config::usbHddShowHiddenFiles = !inst::config::usbHddShowHiddenFiles;
+            inst::config::setConfig();
+            this->hasLastTap = false;
+            this->lastTapIndex = -1;
+            this->drawMenuItems(false, this->currentDir);
+            if (!this->menu->GetItems().empty()) this->menu->SetSelectedIndex(0);
+            return;
+        }
+        if (queueAddMode && (Down & HidNpadButton_B)) { instPage::showQueue(); return; }
+        if (queueAddMode && (Down & HidNpadButton_Y)) {
+            if (!selectedTitles.empty()) selectedTitles.clear();
+            else for (const auto& path : ourFiles) if (instPage::canEnqueueTitle(path.string())) selectedTitles.push_back(path);
+            drawMenuItems(false, currentDir); Down &= ~HidNpadButton_Y;
+        }
 
         if (!Pos.IsEmpty()) {
             if (!this->touchTapActive) {
@@ -262,7 +340,7 @@ namespace inst::ui {
                 int topDir = 0;
                 if (this->currentDir != this->rootDir) topDir++;
                 for (long unsigned int i = this->ourDirectories.size() + topDir; i < this->menu->GetItems().size(); i++) {
-                    if (this->menu->GetItems()[i]->GetIcon() == "romfs:/images/icons/check-box-outline.png") continue;
+                    if (this->menu->GetItems()[i]->GetIcon() == inst::theme::Asset("romfs:/images/icons/check-box-outline.png")) continue;
                     else this->selectNsp(i);
                 }
                 this->drawMenuItems(false, currentDir);
@@ -272,7 +350,8 @@ namespace inst::ui {
             inst::ui::mainApp->CreateShowDialog("inst.hdd.help.title"_lang, "inst.hdd.help.desc"_lang, {"common.ok"_lang}, true);
         }
         if (Down & HidNpadButton_Plus) {
-            if (this->selectedTitles.size() == 0 && this->menu->GetItems()[this->menu->GetSelectedIndex()]->GetIcon() == "romfs:/images/icons/checkbox-blank-outline.png") {
+            if (this->menu->GetItems().empty()) return;
+            if (this->selectedTitles.size() == 0 && this->menu->GetItems()[this->menu->GetSelectedIndex()]->GetIcon() == inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png")) {
                 this->selectNsp(this->menu->GetSelectedIndex());
             }
             if (this->selectedTitles.size() > 0) this->startInstall();

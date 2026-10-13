@@ -8,33 +8,32 @@
 #include "ui/bottomHint.hpp"
 
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 
 namespace inst::ui {
     extern MainApplication *mainApp;
 
     usbInstPage::usbInstPage() : Layout::Layout() {
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto infoColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto infoColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->infoRect = Rectangle::New(0, 75, 1280, 60, infoColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -64,15 +63,15 @@ namespace inst::ui {
         this->butText = TextBlock::New(10, 678, "", 20);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
         this->setButtonsText("inst.usb.buttons"_lang);
-        this->menu = pu::ui::elm::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 50, 10);
+        this->menu = inst::theme::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 50, 10);
         if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->menu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->menu->SetOnFocusColor(COLOR("#00000033"));
-            this->menu->SetScrollbarColor(COLOR("#17090980"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
-        this->infoImage = Image::New(460, 332, "romfs:/images/icons/usb-connection-waiting.png");
+        this->infoImage = Image::New(460, 332, inst::theme::Asset("romfs:/images/icons/usb-connection-waiting.png"));
         this->Add(this->topRect);
         this->Add(this->infoRect);
         this->Add(this->botRect);
@@ -108,10 +107,10 @@ namespace inst::ui {
             std::string itm = inst::util::shortenString(inst::util::formatUrlString(url), 56, true);
             auto ourEntry = pu::ui::elm::MenuItem::New(itm);
             ourEntry->SetColor(COLOR("#FFFFFFFF"));
-            ourEntry->SetIcon("romfs:/images/icons/checkbox-blank-outline.png");
+            ourEntry->SetIcon(inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
             for (long unsigned int i = 0; i < this->selectedTitles.size(); i++) {
                 if (this->selectedTitles[i] == url) {
-                    ourEntry->SetIcon("romfs:/images/icons/check-box-outline.png");
+                    ourEntry->SetIcon(inst::theme::Asset("romfs:/images/icons/check-box-outline.png"));
                 }
             }
             this->menu->AddItem(ourEntry);
@@ -119,7 +118,7 @@ namespace inst::ui {
     }
 
     void usbInstPage::selectTitle(int selectedIndex) {
-        if (this->menu->GetItems()[selectedIndex]->GetIcon() == "romfs:/images/icons/check-box-outline.png") {
+        if (this->menu->GetItems()[selectedIndex]->GetIcon() == inst::theme::Asset("romfs:/images/icons/check-box-outline.png")) {
             for (long unsigned int i = 0; i < this->selectedTitles.size(); i++) {
                 if (this->selectedTitles[i] == this->ourTitles[selectedIndex]) this->selectedTitles.erase(this->selectedTitles.begin() + i);
             }
@@ -225,7 +224,7 @@ namespace inst::ui {
             if (this->selectedTitles.size() == this->menu->GetItems().size()) this->drawMenuItems(true);
             else {
                 for (long unsigned int i = 0; i < this->menu->GetItems().size(); i++) {
-                    if (this->menu->GetItems()[i]->GetIcon() == "romfs:/images/icons/check-box-outline.png") continue;
+                    if (this->menu->GetItems()[i]->GetIcon() == inst::theme::Asset("romfs:/images/icons/check-box-outline.png")) continue;
                     else this->selectTitle(i);
                 }
                 this->drawMenuItems(false);

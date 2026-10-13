@@ -2,6 +2,9 @@
 #include <pu/Plutonium>
 #include "ui/bottomHint.hpp"
 #include "util/config.hpp"
+#include "util/lan_discovery.hpp"
+#include "util/theme.hpp"
+#include <thread>
 
 using namespace pu::ui::elm;
 namespace inst::ui {
@@ -9,6 +12,9 @@ namespace inst::ui {
     {
         public:
             optionsPage();
+            ~optionsPage();
+            void stopDiscoveryWorker();
+            void ShowThemePicker();
             PU_SMART_CTOR(optionsPage)
             void onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos);
             static void askToUpdate(std::vector<std::string> updateInfo);
@@ -32,6 +38,18 @@ namespace inst::ui {
             Rectangle::Ref batteryFill;
             Rectangle::Ref batteryCap;
         private:
+            std::thread discoveryThread;
+            std::atomic<bool> discoveryCancel{false}, discoveryDone{false};
+            inst::discovery::ScanResult discoveryResult;
+            bool discoveryVisible = false, discoveryFinished = false;
+            Menu::Ref discoveryMenu;
+            TextBlock::Ref discoveryStatus;
+            TextBlock::Ref discoverySpinner;
+            u64 discoverySpinnerLastTick = 0;
+            int discoverySpinnerFrame = 0;
+            void startDiscovery();
+            void closeDiscovery();
+            void updateDiscovery(u64 down);
             BottomHintTouchState bottomHintTouch;
             std::vector<BottomHintSegment> bottomHintSegments;
             TextBlock::Ref butText;
@@ -49,15 +67,20 @@ namespace inst::ui {
             int selectedSection = 0;
             bool tabsFocused = false;
             bool remoteListVisible = false;
+            bool themeListVisible = false;
+            std::vector<inst::theme::Choice> themeChoices;
+            void openThemeList();
+            void closeThemeList();
+            void handleThemeListInput(u64 down, pu::ui::Touch pos);
             bool remoteFormVisible = false;
-            bool remoteProtocolDropdownVisible = false;
-            bool remoteModeDropdownVisible = false;
             bool remoteFormWasActive = false;
             bool remoteFormReturnToList = false;
             int lockedMenuIndex = 0;
             int remoteListIndex = 0;
             int remoteFormReturnIndex = 0;
             inst::config::RemoteProfile remoteFormProfile;
+            std::string remoteFormLanProtocol = "http";
+            bool remoteFormLanProtocolDropdownVisible = false;
             std::vector<int> sectionMenuIndices;
             std::vector<inst::config::RemoteProfile> remoteListProfiles;
             std::vector<TextBlock::Ref> sectionTexts;
@@ -65,11 +88,13 @@ namespace inst::ui {
             Rectangle::Ref remoteFormShade;
             Rectangle::Ref remoteFormBorder;
             Rectangle::Ref remoteFormPanel;
-            Rectangle::Ref remoteProtocolDropdownPanel;
             TextBlock::Ref remoteFormTitle;
             TextBlock::Ref remoteFormHint;
             pu::ui::elm::Menu::Ref remoteFormMenu;
-            pu::ui::elm::Menu::Ref remoteProtocolDropdownMenu;
+            std::vector<TextBlock::Ref> remoteFormValues;
+            Rectangle::Ref remoteFormLanProtocolPanel;
+            Menu::Ref remoteFormLanProtocolMenu;
+            void applyRemoteFormLanProtocol();
             void setSectionNavText();
             void setSettingsMenuText();
             void refreshOptions(bool resetSelection = false);

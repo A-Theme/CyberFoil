@@ -25,5 +25,5 @@ SOFTWARE.
 #include <vector>
 
 namespace hddInstStuff {
-    void installNspFromFile(std::vector<std::filesystem::path> ourNspList, int whereToInstall);
+    void installNspFromFile(std::vector<std::filesystem::path> ourNspList, int whereToInstall, const std::vector<std::filesystem::path>& availableTitles = {});
 }

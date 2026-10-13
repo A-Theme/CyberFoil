@@ -83,7 +83,7 @@ namespace tin::install::nsp
         }
     }
 
-    bool stopThreadsHttpNsp;
+    std::atomic<bool> stopThreadsHttpNsp{false};
 
     HTTPNSP::HTTPNSP(std::string url, std::vector<std::string> requestHeaders) :
         m_download(url, std::move(requestHeaders)), m_displayName(DeriveDisplayNameFromUrl(url))
@@ -116,10 +116,11 @@ namespace tin::install::nsp
                     return 0;
                 while (true)
                 {
-                    if (inst::ui::instPage::isInstallCancelRequested())
+                    if (stopThreadsHttpNsp || inst::ui::instPage::isInstallCancelRequested())
                         return 0;
                     if (args->bufferedPlaceholderWriter->CanAppendData(streamBufSize))
                         break;
+                    svcSleepThread(1000000);
                 }
 
                 args->bufferedPlaceholderWriter->AppendData(streamBuf, streamBufSize);
@@ -154,6 +155,8 @@ namespace tin::install::nsp
                 }
                 if (args->bufferedPlaceholderWriter->CanWriteSegmentToPlaceholder())
                     args->bufferedPlaceholderWriter->WriteSegmentToPlaceholder();
+                else
+                    svcSleepThread(1000000);
             }
         }
         catch (...) {
@@ -215,7 +218,7 @@ namespace tin::install::nsp
             if (newTime - startTime >= freq * 0.5)
             {
                 size_t newSizeBuffered = bufferedPlaceholderWriter.GetSizeBuffered();
-                double mbBuffered = (newSizeBuffered / (1024 * 1024)) - (startSizeBuffered / (1024 * 1024));
+                double mbBuffered = static_cast<double>(newSizeBuffered - startSizeBuffered) / (1024 * 1024);
                 double duration = ((double)(newTime - startTime) / (double)freq);
                 double speed =  mbBuffered / duration;
 
@@ -245,16 +248,18 @@ namespace tin::install::nsp
                 inst::ui::instPage::setInstBarPerc((double)downloadProgress);
                 inst::ui::instPage::setProgressDetailText(
                     "Downloaded " + FormatOneDecimal(sizeBuffered / (1024 * 1024)) + " / " +
-                    FormatOneDecimal(totalSize / (1024 * 1024)) + " MB (" +
-                    std::to_string(downloadProgress) + "%) • ETA " + etaText
+                    FormatOneDecimal(totalSize / (1024 * 1024)) + " MB • " +
+                    FormatOneDecimal(emaSpeed) + " MB/s • ETA " + etaText
                 );
             }
+            svcSleepThread(1000000);
         }
         inst::ui::instPage::setInstBarPerc(100);
-        inst::ui::instPage::setProgressDetailText("Downloaded 100% • Verifying and installing...");
+        inst::ui::instPage::setProgressDetailText("Download complete • Verifying and installing...");
 
         inst::ui::instPage::setInstInfoText("inst.info_page.top_info0"_lang + displayFileName + "...");
         inst::ui::instPage::setInstBarPerc(0);
+        u64 lastWriteUiTick = 0;
         while (!bufferedPlaceholderWriter.IsPlaceholderComplete() && !stopThreadsHttpNsp)
         {
             if (inst::ui::instPage::isInstallCancelRequested()) {
@@ -263,17 +268,22 @@ namespace tin::install::nsp
                 stopThreadsHttpNsp = true;
                 break;
             }
+            const u64 now = armGetSystemTick();
+            if (lastWriteUiTick != 0 && now - lastWriteUiTick < freq / 5) {
+                svcSleepThread(1000000);
+                continue;
+            }
+            lastWriteUiTick = now;
             int installProgress = (int)(((double)bufferedPlaceholderWriter.GetSizeWrittenToPlaceholder() / (double)bufferedPlaceholderWriter.GetTotalDataSize()) * 100.0);
 
             inst::ui::instPage::setInstBarPerc((double)installProgress);
             inst::ui::instPage::setProgressDetailText(
                 "Installing " + FormatOneDecimal((double)bufferedPlaceholderWriter.GetSizeWrittenToPlaceholder() / 1000000.0) + " / " +
-                FormatOneDecimal((double)bufferedPlaceholderWriter.GetTotalDataSize() / 1000000.0) + " MB (" +
-                std::to_string(installProgress) + "%)"
+                FormatOneDecimal((double)bufferedPlaceholderWriter.GetTotalDataSize() / 1000000.0) + " MB"
             );
         }
         inst::ui::instPage::setInstBarPerc(100);
-        inst::ui::instPage::setProgressDetailText("Installing 100%");
+        inst::ui::instPage::setProgressDetailText("Install complete");
 
         thrd_join(curlThread, NULL);
         thrd_join(writeThread, NULL);

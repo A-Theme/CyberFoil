@@ -161,6 +161,8 @@
       "delete_info": " instalado. ¿Borrarlo de la unidad USB?",
       "delete_info_multi": " archivos instalados con éxito. ¿Borrarlos de la unidad USB?",
       "delete_desc": "Los archivos originales no son necesarios después de haber sido instalados",
+      "show_hidden": "Mostrar ocultos",
+      "hide_hidden": "Ocultar ocultos",
       "buttons": " Selecionar Archivo     Seleccionar Todos     Instalar Archivo(s)     Ayuda     Cancelar"
     },
     "usb": {
@@ -249,7 +251,13 @@
     "generic_error": "¡Instalación de sigpatches fallida!"
   },
   "options": {
+    "theme_loading": "Aplicando tema…",
+    "theme_picker": "Seleccionar tema",
+    "theme_picker_hint": " Elegir tema     Atrás",
+    "theme_default": "Predeterminado",
     "menu_items": {
+      "theme": "Tema: ",
+      "usb_hdd_hidden": "Mostrar archivos ocultos en unidades USB",
       "ignore_firm": "Ignorar la versión mínima de firmware que necesitan los títulos",
       "nca_verify": "Verificar las firmas NCA antes de la instalación",
       "boost_mode": "Habilitar el «modo Turbo» durante las instalaciones",

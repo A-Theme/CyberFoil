@@ -47,6 +47,10 @@ namespace tin::install
 
     Install::~Install()
     {
+        if (!m_committed) {
+            RollbackContentMeta();
+            try { CleanupSessionInstalledNcas(); } catch (...) {}
+        }
         appletSetMediaPlaybackState(false);
     }
 
@@ -83,15 +87,39 @@ namespace tin::install
         m_sessionInstalledNcas.clear();
     }
 
-    // TODO: Implement RAII on NcmContentMetaDatabase
+    void Install::RollbackContentMeta() noexcept
+    {
+        if (m_metaBackups.empty()) return;
+        NcmContentMetaDatabase db{};
+        if (R_FAILED(ncmOpenContentMetaDatabase(&db, m_destStorageId))) return;
+        for (auto it = m_metaBackups.rbegin(); it != m_metaBackups.rend(); ++it) {
+            const Result rc = it->existed
+                ? ncmContentMetaDatabaseSet(&db, &it->key, it->data.data(), it->data.size())
+                : ncmContentMetaDatabaseRemove(&db, &it->key);
+            if (R_FAILED(rc)) LOG_DEBUG("Failed to restore content meta: 0x%x\n", rc);
+        }
+        ncmContentMetaDatabaseCommit(&db);
+        serviceClose(&db.s);
+        m_metaBackups.clear();
+    }
+
     void Install::InstallContentMetaRecords(tin::data::ByteBuffer& installContentMetaBuf, int i)
     {
-        NcmContentMetaDatabase contentMetaDatabase;
+        NcmContentMetaDatabase contentMetaDatabase{};
         NcmContentMetaKey contentMetaKey = m_contentMeta[i].GetContentMetaKey();
 
         try
         {
             ASSERT_OK(ncmOpenContentMetaDatabase(&contentMetaDatabase, m_destStorageId), "Failed to open content meta database");
+            MetaBackup backup{contentMetaKey, false, {}};
+            ASSERT_OK(ncmContentMetaDatabaseHas(&contentMetaDatabase, &backup.existed, &contentMetaKey), "Failed to check existing content meta");
+            if (backup.existed) {
+                u64 size = 0;
+                ASSERT_OK(ncmContentMetaDatabaseGetSize(&contentMetaDatabase, &size, &contentMetaKey), "Failed to size existing content meta");
+                backup.data.resize(size);
+                ASSERT_OK(ncmContentMetaDatabaseGet(&contentMetaDatabase, &contentMetaKey, &size, backup.data.data(), size), "Failed to back up existing content meta");
+            }
+            m_metaBackups.push_back(std::move(backup));
             ASSERT_OK(ncmContentMetaDatabaseSet(&contentMetaDatabase, &contentMetaKey, (NcmContentMetaHeader*)installContentMetaBuf.GetData(), installContentMetaBuf.GetSize()), "Failed to set content records");
             ASSERT_OK(ncmContentMetaDatabaseCommit(&contentMetaDatabase), "Failed to commit content records");
         }
@@ -156,10 +184,7 @@ namespace tin::install
 
                 tin::data::ByteBuffer installContentMetaBuf;
                 m_contentMeta[i].GetInstallContentMeta(installContentMetaBuf, cnmtContentRecord, m_ignoreReqFirmVersion);
-                inst::diag::NoteStep("Prepare phase: writing content meta record #" + std::to_string(i + 1));
-
-                this->InstallContentMetaRecords(installContentMetaBuf, i);
-                this->InstallApplicationRecord(i);
+                m_pendingContentMeta.push_back(std::move(installContentMetaBuf));
             }
         }
         catch (...) {
@@ -170,17 +195,6 @@ namespace tin::install
 
     void Install::Begin()
     {
-        LOG_DEBUG("Installing ticket and cert...\n");
-        inst::diag::NoteStep("Install phase: ticket/cert import");
-        try
-        {
-            this->InstallTicketCert();
-        }
-        catch (std::runtime_error& e)
-        {
-            LOG_DEBUG("WARNING: Ticket installation failed! This may not be an issue, depending on your use case.\nProceed with caution!\n");
-        }
-
         try {
             for (nx::ncm::ContentMeta contentMeta: m_contentMeta) {
                 LOG_DEBUG("Installing NCAs...\n");
@@ -202,8 +216,22 @@ namespace tin::install
                     TrackSessionInstalledNca(record.content_id);
                 }
             }
+            if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
+            // No UI/input callbacks in this short final commit. Cancellation is
+            // accepted throughout transfer; publication only happens afterward.
+            inst::diag::NoteStep("Install phase: committing completed title");
+            try { this->InstallTicketCert(); }
+            catch (std::runtime_error&) { LOG_DEBUG("WARNING: Ticket installation failed.\n"); }
+            for (size_t i = 0; i < m_pendingContentMeta.size(); ++i)
+                this->InstallContentMetaRecords(m_pendingContentMeta[i], i);
+            for (size_t i = 0; i < m_pendingContentMeta.size(); ++i)
+                this->InstallApplicationRecord(i);
+            m_committed = true;
+            m_metaBackups.clear();
+            m_sessionInstalledNcas.clear();
         }
         catch (...) {
+            RollbackContentMeta();
             CleanupSessionInstalledNcas();
             throw;
         }

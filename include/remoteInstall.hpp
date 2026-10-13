@@ -23,7 +23,7 @@ namespace remoteInstStuff {
         std::string cheatBuildId;
         std::string cheatNote;
         std::uint64_t saveCreatedTs = 0;
-        std::uint64_t size;
+        std::uint64_t size = 0;
         std::uint64_t titleId = 0;
         std::uint32_t appVersion = 0;
         std::uint32_t releaseDate = 0;
@@ -49,5 +49,5 @@ namespace remoteInstStuff {
     std::string GetRemoteApiPrefix();
     bool DownloadCheatText(const RemoteItem& item, const std::string& user, const std::string& pass, std::string& text, std::string& error);
     bool UploadCheatText(const std::string& remoteUrl, const std::string& user, const std::string& pass, const std::string& titleId, const std::string& buildId, const std::string& note, const std::string& text, std::string& error);
-    void installTitleRemote(const std::vector<RemoteItem>& items, int storage, const std::string& sourceLabel);
+    void installTitleRemote(const std::vector<RemoteItem>& items, int storage, const std::string& sourceLabel, const std::vector<RemoteItem>& availableItems = {});
 }

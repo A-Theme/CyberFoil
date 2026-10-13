@@ -167,6 +167,8 @@
             "delete_info": " installed! Delete it from the USB drive?",
             "delete_info_multi": " files installed successfully! Delete them from the USB drive?",
             "delete_desc": "The original files aren't needed anymore after they've been installed",
+            "show_hidden": "Show hidden",
+            "hide_hidden": "Hide hidden",
             "buttons": " Select File     Select All     Install File(s)     Help     Cancel"
         },
         "usb": {
@@ -255,7 +257,13 @@
         "generic_error": "Failed to install signature patches!"
     },
     "options": {
+        "theme_loading": "Applying theme…",
+        "theme_picker": "Select theme",
+        "theme_picker_hint": " Select theme     Back",
+        "theme_default": "Default",
         "menu_items": {
+            "theme": "Theme: ",
+            "usb_hdd_hidden": "Show hidden files on USB drives",
             "ignore_firm": "Ignore minimum firmware version required by titles",
             "nca_verify": "Verify NCA signatures before installation",
             "boost_mode": "Enable \"boost mode\" during installations",

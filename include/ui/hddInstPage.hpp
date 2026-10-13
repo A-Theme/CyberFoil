@@ -13,6 +13,8 @@ namespace inst::ui {
             PU_SMART_CTOR(hddInstPage)
             pu::ui::elm::Menu::Ref menu;
             void startInstall();
+            void beginQueueAddMode();
+            void endQueueAddMode();
             void onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos);
             TextBlock::Ref pageInfoText;
             void drawMenuItems(bool clearItems, std::filesystem::path ourPath);
@@ -36,6 +38,8 @@ namespace inst::ui {
             Rectangle::Ref batteryFill;
             Rectangle::Ref batteryCap;
         private:
+            bool queueAddMode = false;
+            std::vector<std::filesystem::path> queueSavedSelection;
             std::vector<std::filesystem::path> ourDirectories;
             std::vector<std::filesystem::path> ourFiles;
             std::vector<std::filesystem::path> selectedTitles;
@@ -55,6 +59,7 @@ namespace inst::ui {
             int lastTapIndex = -1;
             std::chrono::steady_clock::time_point lastTapTime{};
             void followDirectory();
+            void refreshBottomHint();
             void selectNsp(int selectedIndex);
     };
 }

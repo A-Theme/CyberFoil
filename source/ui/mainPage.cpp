@@ -17,7 +17,9 @@
 #include "nx/usbhdd.h"
 #include "ui/bottomHint.hpp"
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 
 namespace inst::ui {
     extern MainApplication *mainApp;
@@ -258,25 +260,22 @@ namespace inst::ui {
     }
 
     MainPage::MainPage() : Layout::Layout() {
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -310,13 +309,13 @@ namespace inst::ui {
         this->backupUserPickerTitle = TextBlock::New(222, 124, "Select user account to back up", 24);
         this->backupUserPickerTitle->SetColor(COLOR("#FFFFFFFF"));
         this->backupUserPickerTitle->SetVisible(false);
-        this->optionMenu = pu::ui::elm::Menu::New(222, 168, 836, COLOR("#FFFFFF00"), 50, 7, 22);
+        this->optionMenu = inst::theme::Menu::New(222, 168, 836, COLOR("#FFFFFF00"), 50, 7, 22);
         if (inst::config::oledMode) {
-            this->optionMenu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->optionMenu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->optionMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->optionMenu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->optionMenu->SetOnFocusColor(COLOR("#00000033"));
-            this->optionMenu->SetScrollbarColor(COLOR("#17090980"));
+            this->optionMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->optionMenu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
         this->optionMenu->SetVisible(false);
         this->backupUserPickerHint = TextBlock::New(222, 584, "A Select    B Cancel", 18);
@@ -324,33 +323,33 @@ namespace inst::ui {
         this->backupUserPickerHint->SetVisible(false);
         this->installMenuItem = pu::ui::elm::MenuItem::New("main.menu.sd"_lang);
         this->installMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->installMenuItem->SetIcon("romfs:/images/icons/micro-sd.png");
+        this->installMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/micro-sd.png"));
         this->netInstallMenuItem = pu::ui::elm::MenuItem::New("main.menu.net"_lang);
         this->netInstallMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->netInstallMenuItem->SetIcon("romfs:/images/icons/cloud-download.png");
+        this->netInstallMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/cloud-download.png"));
         this->remoteInstallMenuItem = pu::ui::elm::MenuItem::New("main.menu.remote"_lang);
         this->remoteInstallMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->remoteInstallMenuItem->SetIcon("romfs:/images/icons/remote.png");
+        this->remoteInstallMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/remote.png"));
         this->usbInstallMenuItem = pu::ui::elm::MenuItem::New("main.menu.usb"_lang);
         this->usbInstallMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->usbInstallMenuItem->SetIcon("romfs:/images/icons/usb-port.png");
+        this->usbInstallMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/usb-port.png"));
         this->hddInstallMenuItem = pu::ui::elm::MenuItem::New("main.menu.hdd"_lang);
         this->hddInstallMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->hddInstallMenuItem->SetIcon("romfs:/images/icons/usb-install.png");
+        this->hddInstallMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/usb-install.png"));
         this->mtpInstallMenuItem = pu::ui::elm::MenuItem::New("main.menu.mtp"_lang);
         this->mtpInstallMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->mtpInstallMenuItem->SetIcon("romfs:/images/icons/usb-port.png");
+        this->mtpInstallMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/usb-port.png"));
         this->backupSaveDataMenuItem = pu::ui::elm::MenuItem::New("main.menu.backup"_lang);
         this->backupSaveDataMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->backupSaveDataMenuItem->SetIcon("romfs:/images/icons/save-data-cloud.png");
+        this->backupSaveDataMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/save-data-cloud.png"));
         this->settingsMenuItem = pu::ui::elm::MenuItem::New("main.menu.set"_lang);
         this->settingsMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->settingsMenuItem->SetIcon("romfs:/images/icons/settings.png");
+        this->settingsMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/settings.png"));
         this->exitMenuItem = pu::ui::elm::MenuItem::New("main.menu.exit"_lang);
         this->exitMenuItem->SetColor(COLOR("#FFFFFFFF"));
-        this->exitMenuItem->SetIcon("romfs:/images/icons/exit-run.png");
-        const auto tileColor = inst::config::oledMode ? COLOR("#1A1A1ACC") : COLOR("#170909CC");
-        const auto highlightColor = inst::config::oledMode ? COLOR("#FF4D4D66") : COLOR("#FF4D4D88");
+        this->exitMenuItem->SetIcon(inst::theme::Asset("romfs:/images/icons/exit-run.png"));
+        const auto tileColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#1A1A1ACC") : COLOR("#170909CC"));
+        const auto highlightColor = inst::theme::Color("highlight", inst::config::oledMode ? COLOR("#FF4D4D66") : COLOR("#FF4D4D88"));
         const std::vector<std::string> gridLabels = {
             "main.menu.remote"_lang,
             "main.menu.sd"_lang,
@@ -363,15 +362,15 @@ namespace inst::ui {
             "main.menu.exit"_lang
         };
         const std::vector<std::string> gridIcons = {
-            "romfs:/images/icons/remote.png",
-            "romfs:/images/icons/micro-sd.png",
-            "romfs:/images/icons/usb-install.png",
-            "romfs:/images/icons/usb-port.png",
-            "romfs:/images/icons/usb-port.png",
-            "romfs:/images/icons/cloud-download.png",
-            "romfs:/images/icons/save-data-cloud.png",
-            "romfs:/images/icons/settings.png",
-            "romfs:/images/icons/exit-run.png"
+            inst::theme::Asset("romfs:/images/icons/remote.png"),
+            inst::theme::Asset("romfs:/images/icons/micro-sd.png"),
+            inst::theme::Asset("romfs:/images/icons/usb-install.png"),
+            inst::theme::Asset("romfs:/images/icons/usb-port.png"),
+            inst::theme::Asset("romfs:/images/icons/usb-port.png"),
+            inst::theme::Asset("romfs:/images/icons/cloud-download.png"),
+            inst::theme::Asset("romfs:/images/icons/save-data-cloud.png"),
+            inst::theme::Asset("romfs:/images/icons/settings.png"),
+            inst::theme::Asset("romfs:/images/icons/exit-run.png")
         };
         this->mainGridTiles.reserve(kMainGridCols * kMainGridRows);
         this->mainGridIcons.reserve(kMainGridCols * kMainGridRows);
@@ -396,7 +395,7 @@ namespace inst::ui {
         }
         this->mainGridHighlight = Rectangle::New(0, 0, kMainGridTileWidth + 8, kMainGridTileHeight + 8, highlightColor, 20);
         if (std::filesystem::exists(inst::config::appDir + "/awoo_main.png")) this->awooImage = Image::New(410, 190, inst::config::appDir + "/awoo_main.png");
-        else this->awooImage = Image::New(410, 190, "romfs:/images/awoos/5bbdbcf9a5625cd307c9e9bc360d78bd.png");
+        else this->awooImage = Image::New(410, 190, inst::theme::Asset("romfs:/images/awoos/5bbdbcf9a5625cd307c9e9bc360d78bd.png"));
         this->Add(this->awooImage);
         this->Add(this->topRect);
         this->Add(this->botRect);
@@ -422,11 +421,12 @@ namespace inst::ui {
         this->Add(this->butText);
         for (auto& tile : this->mainGridTiles)
             this->Add(tile);
+        // Selection fills the tile behind its contents, even with opaque theme colors.
+        this->Add(this->mainGridHighlight);
         for (auto& icon : this->mainGridIcons)
             this->Add(icon);
         for (auto& label : this->mainGridLabels)
             label->Attach(this);
-        this->Add(this->mainGridHighlight);
         this->Add(this->backupUserPickerRect);
         this->Add(this->backupUserPickerTitle);
         this->Add(this->optionMenu);

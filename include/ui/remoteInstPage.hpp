@@ -25,6 +25,10 @@ namespace inst::ui {
             PU_SMART_CTOR(remoteInstPage)
             void startRemote(bool forceRefresh = false);
             void startInstall();
+            void beginQueueAddMode();
+            void endQueueAddMode();
+            std::vector<remoteInstStuff::RemoteItem> getQueueCatalog() const;
+            void queueInstallIcon(const std::string& key, const std::string& iconUrl, const std::string& filePath);
             void onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos);
             TextBlock::Ref pageInfoText;
             TextBlock::Ref loadingProgressText;
@@ -48,6 +52,9 @@ namespace inst::ui {
             Rectangle::Ref batteryFill;
             Rectangle::Ref batteryCap;
         private:
+            bool queueAddMode = false;
+            std::vector<remoteInstStuff::RemoteItem> queueSavedSelection;
+            bool isQueueSection(int index) const;
             enum class BrowseSortMode {
                 Default,
                 DateDesc,
@@ -75,6 +82,8 @@ namespace inst::ui {
             bool suppressBottomHints = false;
             bool cheatInstallProgressVisible = false;
             std::string activeRemoteUrl;
+            std::string sessionRemoteUrl;
+            std::string sessionRemoteKey;
             bool catalogCacheValid = false;
             bool catalogCacheUsedLegacyFallback = false;
             std::string catalogCacheKey;

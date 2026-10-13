@@ -15,6 +15,7 @@
 #include "ui/remoteInstPage.hpp"
 #include "ui/overflowText.hpp"
 #include "util/config.hpp"
+#include "util/remote_connection.hpp"
 #include "util/curl.hpp"
 #include "cheat_manager.hpp"
 #include "util/lang.hpp"
@@ -24,7 +25,9 @@
 #include "util/util.hpp"
 #include "ui/bottomHint.hpp"
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 #define RemoteDlcTrace(...) ((void)0)
 #define ResetRemoteDlcTrace() ((void)0)
 
@@ -918,27 +921,24 @@ namespace inst::ui {
     extern MainApplication *mainApp;
 
     remoteInstPage::remoteInstPage() : Layout::Layout() {
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto infoColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto infoColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->infoRect = Rectangle::New(0, 75, 1280, 60, infoColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -983,30 +983,30 @@ namespace inst::ui {
         this->butText = TextBlock::New(10, 678, "", 20);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
         this->setButtonsText("inst.remote.buttons_loading"_lang);
-        this->menu = pu::ui::elm::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 36, 14, 22);
+        this->menu = inst::theme::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 36, 14, 22);
         if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->menu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->menu->SetOnFocusColor(COLOR("#00000033"));
-            this->menu->SetScrollbarColor(COLOR("#17090980"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
-        this->infoImage = Image::New(34, 90, "romfs:/images/icons/remote-connection-waiting.png");
-        this->previewImage = Image::New(900, 230, "romfs:/images/icons/title-placeholder.png");
+        this->infoImage = Image::New(34, 90, inst::theme::Asset("romfs:/images/icons/remote-connection-waiting.png"));
+        this->previewImage = Image::New(900, 230, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
         this->previewImage->SetWidth(320);
         this->previewImage->SetHeight(320);
-        auto highlightColor = inst::config::oledMode ? COLOR("#FFFFFF66") : COLOR("#FFFFFF33");
+        auto highlightColor = inst::theme::Color("highlight", inst::config::oledMode ? COLOR("#FFFFFF66") : COLOR("#FFFFFF33"));
         this->gridHighlight = Rectangle::New(0, 0, kGridTileWidth + 8, kGridTileHeight + 8, highlightColor);
         this->gridHighlight->SetVisible(false);
         this->gridImages.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
-            auto img = Image::New(0, 0, "romfs:/images/icons/title-placeholder.png");
+            auto img = Image::New(0, 0, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
             img->SetWidth(kGridTileWidth);
             img->SetHeight(kGridTileHeight);
             img->SetVisible(false);
             this->gridImages.push_back(img);
         }
-        auto selectedColor = COLOR("#34C75966");
+        auto selectedColor = inst::theme::Color("accent", COLOR("#34C75966"));
         this->remoteGridSelectHighlights.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
             auto highlight = Rectangle::New(0, 0, kGridTileWidth + 8, kGridTileHeight + 8, selectedColor);
@@ -1015,14 +1015,14 @@ namespace inst::ui {
         }
         this->remoteGridSelectIcons.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
-            auto icon = Image::New(0, 0, "romfs:/images/icons/title_selected.png");
+            auto icon = Image::New(0, 0, inst::theme::Asset("romfs:/images/icons/title_selected.png"));
             icon->SetWidth(120);
             icon->SetHeight(120);
             icon->SetVisible(false);
             this->remoteGridSelectIcons.push_back(icon);
         }
         this->gridTitleText = TextBlock::New(10, 649, "", 18);
-        this->gridTitleText->SetColor(COLOR("#FFFFFFFF"));
+        this->gridTitleText->SetColor(inst::theme::Color("selected_text", COLOR("#FFFFFFFF")));
         this->gridTitleText->SetVisible(false);
         this->imageLoadingText = TextBlock::New(0, 98, "Fetching images...", 18);
         this->imageLoadingText->SetColor(COLOR("#FFFFFFFF"));
@@ -1065,13 +1065,13 @@ namespace inst::ui {
         this->saveVersionSelectorTitleText = TextBlock::New(114, 112, "", 24);
         this->saveVersionSelectorTitleText->SetColor(COLOR("#FFFFFFFF"));
         this->saveVersionSelectorTitleText->SetVisible(false);
-        this->saveVersionSelectorMenu = pu::ui::elm::Menu::New(114, 152, 1052, COLOR("#FFFFFF00"), 44, 8, 20);
+        this->saveVersionSelectorMenu = inst::theme::Menu::New(114, 152, 1052, COLOR("#FFFFFF00"), 44, 8, 20);
         if (inst::config::oledMode) {
-            this->saveVersionSelectorMenu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->saveVersionSelectorMenu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->saveVersionSelectorMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->saveVersionSelectorMenu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->saveVersionSelectorMenu->SetOnFocusColor(COLOR("#00000033"));
-            this->saveVersionSelectorMenu->SetScrollbarColor(COLOR("#17090980"));
+            this->saveVersionSelectorMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->saveVersionSelectorMenu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
         this->saveVersionSelectorMenu->SetVisible(false);
         this->saveVersionSelectorDetailText = TextBlock::New(114, 524, "", 18);
@@ -1118,11 +1118,12 @@ namespace inst::ui {
         this->Add(this->previewImage);
         for (auto& highlight : this->remoteGridSelectHighlights)
             this->Add(highlight);
+        // Keep focus behind cover art and selection marks for opaque theme colors.
+        this->Add(this->gridHighlight);
         for (auto& img : this->gridImages)
             this->Add(img);
         for (auto& icon : this->remoteGridSelectIcons)
             this->Add(icon);
-        this->Add(this->gridHighlight);
         this->Add(this->gridTitleText);
         this->Add(this->imageLoadingText);
         this->Add(this->listMarqueeMaskRect);
@@ -1172,6 +1173,16 @@ namespace inst::ui {
         this->iconDownloadUiDirty.store(false);
         this->imageLoadingUntilTick = 0;
         this->imageLoadingText->SetVisible(false);
+    }
+
+    void remoteInstPage::queueInstallIcon(const std::string& key, const std::string& iconUrl, const std::string& filePath) {
+        if (iconUrl.empty() || filePath.empty()) return;
+        std::error_code error;
+        std::filesystem::create_directories(std::filesystem::path(filePath).parent_path(), error);
+        if (error) return;
+        remoteInstStuff::RemoteItem item{};
+        item.url = key; item.iconUrl = iconUrl; item.hasIconUrl = true;
+        queueIconDownload(item, filePath);
     }
 
     void remoteInstPage::queueIconDownload(const remoteInstStuff::RemoteItem& item, const std::string& filePath) {
@@ -1343,6 +1354,7 @@ namespace inst::ui {
             return empty;
         if (this->selectedSectionIndex < 0 || this->selectedSectionIndex >= (int)this->remoteSections.size())
             return empty;
+        if (queueAddMode && !isQueueSection(selectedSectionIndex)) return empty;
         return this->remoteSections[this->selectedSectionIndex].items;
     }
 
@@ -1418,7 +1430,7 @@ namespace inst::ui {
             return;
         }
         const auto& section = this->remoteSections[this->selectedSectionIndex];
-        this->pageInfoText->SetText(section.title);
+        this->pageInfoText->SetText(queueAddMode ? "Add to queue  •  " + section.title : section.title);
         this->pageInfoText->SetY(81);
         CenterTextX(this->pageInfoText);
         std::string rightInfo;
@@ -1949,9 +1961,10 @@ namespace inst::ui {
         int textY = rowY + ((itemHeight - this->listMarqueeOverlayText->GetTextHeight()) / 2);
         pu::ui::Color marqueeBaseColor = this->menu->GetColor();
         marqueeBaseColor.A = 255;
-        const pu::ui::Color marqueeHighlightColor = COLOR("#303030FF");
+        const pu::ui::Color marqueeHighlightColor = inst::theme::Color("highlight", COLOR("#303030FF"));
         const pu::ui::Color marqueeResolvedColor = BlendOverOpaque(marqueeBaseColor, marqueeHighlightColor);
         pu::ui::Color marqueeTextColor = ShouldUseDarkText(marqueeResolvedColor) ? COLOR("#000000FF") : COLOR("#FFFFFFFF");
+        marqueeTextColor = inst::theme::Color("selected_text", inst::theme::Color("text", marqueeTextColor));
         const pu::ui::Color currentMarqueeTextColor = this->listMarqueeOverlayText->GetColor();
         if (currentMarqueeTextColor.R != marqueeTextColor.R || currentMarqueeTextColor.G != marqueeTextColor.G
             || currentMarqueeTextColor.B != marqueeTextColor.B || currentMarqueeTextColor.A != marqueeTextColor.A) {
@@ -1993,6 +2006,10 @@ namespace inst::ui {
     }
 
     void remoteInstPage::updateButtonsText() {
+        if (queueAddMode) {
+            this->setButtonsText(" Select     Add to queue     Queue    / Sections     Search     View");
+            return;
+        }
         if (this->saveVersionSelectorVisible) {
             if (this->saveVersionSelectorDeleteMode)
                 this->setButtonsText(" Delete Backup    / Select Version     Back");
@@ -3080,7 +3097,7 @@ namespace inst::ui {
                 }
                 nsExit();
             }
-            this->previewImage->SetImage("romfs:/images/icons/title-placeholder.png");
+            this->previewImage->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
             applyPreviewLayout();
             this->previewImage->SetVisible(true);
             this->refreshImageLoadingText();
@@ -3112,7 +3129,7 @@ namespace inst::ui {
             this->refreshImageLoadingText();
         }
 
-        this->previewImage->SetImage("romfs:/images/icons/title-placeholder.png");
+        this->previewImage->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
         applyPreviewLayout();
         this->previewImage->SetVisible(true);
         this->refreshImageLoadingText();
@@ -3323,9 +3340,9 @@ namespace inst::ui {
             auto entry = pu::ui::elm::MenuItem::New(itm);
             entry->SetColor(COLOR("#FFFFFFFF"));
             if (!installedSection && !saveSyncSection && !cheatsSection) {
-                entry->SetIcon("romfs:/images/icons/checkbox-blank-outline.png");
+                entry->SetIcon(inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
                 if (!item.url.empty() && selectedUrls.find(item.url) != selectedUrls.end())
-                    entry->SetIcon("romfs:/images/icons/check-box-outline.png");
+                    entry->SetIcon(inst::theme::Asset("romfs:/images/icons/check-box-outline.png"));
             }
             this->menu->AddItem(entry);
         }
@@ -3394,8 +3411,8 @@ namespace inst::ui {
         for (std::size_t i = 0; i < count; i++) {
             const auto& item = this->visibleItems[i];
             const bool isSelected = !item.url.empty() && selectedUrls.find(item.url) != selectedUrls.end();
-            menuItems[i]->SetIcon(isSelected ? "romfs:/images/icons/check-box-outline.png"
-                                             : "romfs:/images/icons/checkbox-blank-outline.png");
+            menuItems[i]->SetIcon(isSelected ? inst::theme::Asset("romfs:/images/icons/check-box-outline.png")
+                                             : inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
         }
     }
 
@@ -3484,7 +3501,7 @@ namespace inst::ui {
                 }
 
                 if (!applied) {
-                    this->gridImages[i]->SetImage("romfs:/images/icons/title-placeholder.png");
+                    this->gridImages[i]->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
                     this->gridImages[i]->SetWidth(kGridTileWidth);
                     this->gridImages[i]->SetHeight(kGridTileHeight);
                 }
@@ -3592,7 +3609,7 @@ namespace inst::ui {
                 }
 
                 if (!applied) {
-                    this->gridImages[i]->SetImage("romfs:/images/icons/title-placeholder.png");
+                    this->gridImages[i]->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
                     this->gridImages[i]->SetWidth(kGridTileWidth);
                     this->gridImages[i]->SetHeight(kGridTileHeight);
                 }
@@ -3684,6 +3701,7 @@ namespace inst::ui {
         const auto& item = this->visibleItems[selectedIndex];
         if (item.url.empty())
             return;
+        if (queueAddMode && !instPage::canEnqueueTitle(item.url)) return;
         auto selected = std::find_if(this->selectedItems.begin(), this->selectedItems.end(), [&](const auto& entry) {
             return entry.url == item.url;
         });
@@ -3808,7 +3826,56 @@ namespace inst::ui {
             inst::config::remoteUrl = remoteUrl;
             inst::config::setConfig();
         }
+        // Resolve once per profile/session, on a worker so the loading UI keeps
+        // rendering. Explicit refresh rechecks connectivity for network changes.
+        for (const auto& profile : inst::config::LoadRemotes()) {
+            if ((inst::config::remoteProfileFile.empty() ? !inst::config::RemoteMatchesUrl(profile, remoteUrl)
+                    : profile.fileName != inst::config::remoteProfileFile) ||
+                profile.username != inst::config::remoteUser || profile.password != inst::config::remotePass ||
+                profile.legacyMode != inst::config::remoteLegacyMode) continue;
+            const std::string key = profile.fileName + "\n" + profile.lanUrl + "\n" + profile.wanUrl +
+                "\n" + profile.connection + "\n" + profile.username + "\n" + profile.password +
+                (profile.legacyMode ? "\nlegacy" : "\ncyberfoil") + "\n" + inst::util::getIPAddress();
+            if (!forceRefresh && this->sessionRemoteKey == key && !this->sessionRemoteUrl.empty()) {
+                remoteUrl = this->sessionRemoteUrl;
+            } else {
+                std::atomic<bool> resolved{false};
+                std::string selected, resolveError;
+                this->setLoadingProgressStage("Choosing Remote connection...");
+                std::thread resolver([&]() {
+                    try { selected = inst::remote::ResolveEndpoint(profile); }
+                    catch (...) { resolveError = "Unable to choose a Remote connection."; }
+                    resolved.store(true, std::memory_order_release);
+                });
+                u64 lastTick = armGetSystemTick();
+                int frame = 0;
+                while (!resolved.load(std::memory_order_acquire)) {
+                    const u64 now = armGetSystemTick();
+                    if (now - lastTick >= (armGetSystemTickFreq() * 140) / 1000) {
+                        lastTick = now;
+                        static const char* frames[] = {"Choosing connection .", "Choosing connection ..", "Choosing connection ...", "Choosing connection"};
+                        this->setLoadingProgressStage(frames[frame++ % 4]);
+                    }
+                    mainApp->CallForRender();
+                    svcSleepThread(16'000'000ULL);
+                }
+                resolver.join();
+                if (!resolveError.empty() || selected.empty()) {
+                    mainApp->CreateShowDialog("Remote connection", resolveError.empty() ? "No URL configured for this connection preference." : resolveError,
+                        {"common.ok"_lang}, true);
+                    mainApp->LoadLayout(mainApp->mainPage);
+                    return;
+                }
+                remoteUrl = selected;
+                this->sessionRemoteUrl = selected;
+                this->sessionRemoteKey = key;
+            }
+            break;
+        }
         this->activeRemoteUrl = remoteUrl;
+        // Downloads scope Basic Auth to this origin. The profile's two saved
+        // endpoints and preference remain unchanged; no setConfig() here.
+        inst::config::remoteUrl = remoteUrl;
 
         std::string error;
         bool usedLegacyFallback = false;
@@ -4171,7 +4238,57 @@ namespace inst::ui {
         mainApp->CallForRender();
     }
 
+    bool remoteInstPage::isQueueSection(int index) const {
+        if (index < 0 || index >= static_cast<int>(remoteSections.size())) return false;
+        const auto& section = remoteSections[index];
+        if (section.id == "installed" || section.id == "saves" || section.id == "save" || section.id == "cheats" || section.id == "cheat") return false;
+        return std::any_of(section.items.begin(), section.items.end(), [](const auto& item) {
+            return !item.url.empty() && !item.isCheat && item.saveId.empty();
+        });
+    }
+
+    std::vector<remoteInstStuff::RemoteItem> remoteInstPage::getQueueCatalog() const {
+        std::vector<remoteInstStuff::RemoteItem> items;
+        std::unordered_set<std::string> seen;
+        for (size_t i = 0; i < remoteSections.size(); ++i) {
+            if (!isQueueSection(static_cast<int>(i))) continue;
+            for (const auto& item : remoteSections[i].items)
+                if (!item.url.empty() && !item.isCheat && item.saveId.empty() && seen.insert(item.url).second) items.push_back(item);
+        }
+        return items;
+    }
+
+    void remoteInstPage::beginQueueAddMode() {
+        if (queueAddMode) return;
+        queueSavedSelection = selectedItems; selectedItems.clear(); queueAddMode = true;
+        pendingMotdFetch = false; touchActive = false; bottomHintTouch = {};
+        closeDescriptionOverlay();
+        if (!isQueueSection(selectedSectionIndex)) {
+            for (size_t i = 0; i < remoteSections.size(); ++i)
+                if (isQueueSection(static_cast<int>(i))) { selectedSectionIndex = static_cast<int>(i); break; }
+            searchQuery.clear(); remoteGridIndex = 0; remoteGridPage = -1;
+        }
+        updateSectionText(); updateButtonsText(); drawMenuItems(false);
+        mainApp->LoadLayout(mainApp->remoteinstPage);
+    }
+
+    void remoteInstPage::endQueueAddMode() {
+        if (!queueAddMode) return;
+        queueAddMode = false; selectedItems = std::move(queueSavedSelection);
+        closeDescriptionOverlay();
+        touchActive = false; bottomHintTouch = {};
+        updateSectionText(); updateButtonsText();
+    }
+
     void remoteInstPage::startInstall() {
+        if (queueAddMode) {
+            std::vector<std::string> keys;
+            for (const auto& item : selectedItems) keys.push_back(item.url);
+            instPage::enqueueTitles(keys);
+            selectedItems.clear();
+            instPage::showQueue();
+            return;
+        }
         std::vector<remoteInstStuff::RemoteItem> autoAddedItems;
         if (!this->selectedItems.empty()) {
             auto isAlreadySelected = [&](const remoteInstStuff::RemoteItem& candidate) {
@@ -4332,7 +4449,7 @@ namespace inst::ui {
         }
 
         this->updateRememberedSelection();
-        remoteInstStuff::installTitleRemote(this->selectedItems, dialogResult, "inst.remote.source_string"_lang);
+        remoteInstStuff::installTitleRemote(this->selectedItems, dialogResult, "inst.remote.source_string"_lang, getQueueCatalog());
         this->refreshAfterInstall();
     }
 
@@ -4366,6 +4483,38 @@ namespace inst::ui {
         }
         if (this->handleSaveVersionSelectorInput(Down, Up, Held, Pos))
             return;
+        if (queueAddMode) {
+            if (Down & HidNpadButton_B) { instPage::showQueue(); return; }
+            if (Down & HidNpadButton_Plus) {
+                if (selectedItems.empty()) selectTitle(remoteGridMode ? remoteGridIndex : menu->GetSelectedIndex());
+                if (!selectedItems.empty()) startInstall();
+                return;
+            }
+            if (Down & (HidNpadButton_L | HidNpadButton_R)) {
+                const int step = Down & HidNpadButton_R ? 1 : -1;
+                for (size_t tries = 0; tries < remoteSections.size(); ++tries) {
+                    selectedSectionIndex = (selectedSectionIndex + step + static_cast<int>(remoteSections.size())) % static_cast<int>(remoteSections.size());
+                    if (isQueueSection(selectedSectionIndex)) break;
+                }
+                searchQuery.clear(); gridSelectedIndex = 0; gridPage = -1; remoteGridIndex = 0; remoteGridPage = -1;
+                updateSectionText(); updateButtonsText(); drawMenuItems(false);
+                Down &= ~(HidNpadButton_L | HidNpadButton_R);
+            }
+            if (Down & HidNpadButton_Y) {
+                std::unordered_set<std::string> selectedUrls;
+                for (const auto& item : selectedItems) selectedUrls.insert(item.url);
+                const bool allSelected = std::all_of(visibleItems.begin(), visibleItems.end(), [&](const auto& item) {
+                    return !instPage::canEnqueueTitle(item.url) || selectedUrls.count(item.url) != 0;
+                });
+                if (allSelected) selectedItems.clear();
+                else for (const auto& item : visibleItems)
+                    if (instPage::canEnqueueTitle(item.url) && selectedUrls.insert(item.url).second) selectedItems.push_back(item);
+                drawMenuItems(false);
+                Down &= ~HidNpadButton_Y;
+            }
+            // Keep the session's source, credentials and catalogue stable.
+            Down &= ~HidNpadButton_X;
+        }
         if (this->pendingMotdFetch && Down == 0 && Up == 0 && Held == 0 && Pos.IsEmpty()) {
             this->pendingMotdFetch = false;
             std::string motd = remoteInstStuff::FetchRemoteMotd(this->activeRemoteUrl, inst::config::remoteUser, inst::config::remotePass);

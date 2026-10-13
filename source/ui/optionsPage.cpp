@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <switch.h>
 #include "ui/MainApplication.hpp"
@@ -16,7 +18,9 @@
 #include "remoteInstall.hpp"
 #include "ui/bottomHint.hpp"
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 
 namespace inst::ui {
     extern MainApplication *mainApp;
@@ -24,9 +28,21 @@ namespace inst::ui {
     std::vector<std::string> languageStrings = {"English", "日本語", "Français", "Deutsch", "Italiano", "Español", "Português", "Korean", "Русский", "簡体中文","繁體中文"};
 
     namespace {
+        // Keep the form highlight in place while its dropdown handles input.
+        class RemoteFormMenu final : public inst::theme::Menu {
+        public:
+            explicit RemoteFormMenu(bool& dropdownVisible)
+                : inst::theme::Menu(260, 152, 760, COLOR("#00000000"), 44, 10, 22), dropdownVisible(dropdownVisible) {}
+            void OnInput(u64 down, u64 up, u64 held, pu::ui::Touch pos) override {
+                if (!dropdownVisible) inst::theme::Menu::OnInput(down, up, held, pos);
+            }
+        private:
+            bool& dropdownVisible;
+        };
         bool IsActiveRemote(const inst::config::RemoteProfile& remote)
         {
-            return inst::config::BuildRemoteUrl(remote) == inst::config::remoteUrl &&
+            return (inst::config::remoteProfileFile.empty() ? inst::config::RemoteMatchesUrl(remote, inst::config::remoteUrl)
+                : remote.fileName == inst::config::remoteProfileFile) &&
                    remote.username == inst::config::remoteUser &&
                    remote.password == inst::config::remotePass &&
                    remote.legacyMode == inst::config::remoteLegacyMode;
@@ -71,39 +87,6 @@ namespace inst::ui {
                 labels.push_back(label);
             }
             return labels;
-        }
-
-        bool RemoteInputHasExplicitPort(const std::string& value)
-        {
-            std::string input = TrimString(value);
-            if (input.rfind("https://", 0) == 0) {
-                input = input.substr(8);
-            } else if (input.rfind("http://", 0) == 0) {
-                input = input.substr(7);
-            }
-
-            const std::size_t authorityEnd = input.find_first_of("/?#");
-            if (authorityEnd != std::string::npos)
-                input = input.substr(0, authorityEnd);
-
-            const std::size_t atPos = input.rfind('@');
-            if (atPos != std::string::npos)
-                input = input.substr(atPos + 1);
-
-            if (input.empty())
-                return false;
-
-            if (input.front() == '[') {
-                const std::size_t closingBracket = input.find(']');
-                return closingBracket != std::string::npos &&
-                       closingBracket + 1 < input.size() &&
-                       input[closingBracket + 1] == ':';
-            }
-
-            const std::size_t colonPos = input.rfind(':');
-            return colonPos != std::string::npos &&
-                   input.find(':') == colonPos &&
-                   colonPos + 1 < input.size();
         }
 
         std::string GetUserAgentProfileLabel(const std::string& mode)
@@ -257,28 +240,25 @@ namespace inst::ui {
             inst::config::setConfig();
         }
 
-        if (inst::config::oledMode) {
-            this->SetBackgroundColor(COLOR("#000000FF"));
-        } else {
-            this->SetBackgroundColor(COLOR("#670000FF"));
-            if (std::filesystem::exists(inst::config::appDir + "/background.png")) this->SetBackgroundImage(inst::config::appDir + "/background.png");
-            else this->SetBackgroundImage("romfs:/images/background.jpg");
-        }
-        const auto topColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF");
-        const auto infoColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
-        const auto botColor = inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980");
+        inst::theme::ApplyBackground(*this, inst::config::oledMode, inst::config::appDir);
+        const auto topColor = inst::theme::Color("header", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        const auto infoColor = inst::theme::Color("panel", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
+        const auto botColor = inst::theme::Color("footer", inst::config::oledMode ? COLOR("#000000FF") : COLOR("#17090980"));
         this->topRect = Rectangle::New(0, 0, 1280, 74, topColor);
         this->infoRect = Rectangle::New(0, 75, 1280, 60, infoColor);
         this->botRect = Rectangle::New(0, 660, 1280, 60, botColor);
         this->sideNavRect = Rectangle::New(0, 136, 300, 523, inst::config::oledMode ? COLOR("#FFFFFF18") : COLOR("#170909A0"));
         if (inst::config::gayMode) {
-            this->titleImage = Image::New(-113, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(-113, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(367, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
         else {
-            this->titleImage = Image::New(0, -8, "romfs:/images/logo.png");
+            this->titleImage = Image::New(0, -8, inst::theme::Asset("romfs:/images/logo.png"));
             this->appVersionText = TextBlock::New(480, 29, "v" + inst::config::appVersion + (inst::config::appGitMeta.empty() ? "" : ("\n" + inst::config::appGitMeta)), 22);
         }
+        // Keep external banners within the existing header geometry.
+        this->titleImage->SetWidth(480);
+        this->titleImage->SetHeight(93);
         this->appVersionText->SetColor(COLOR("#FFFFFFFF"));
         this->timeText = TextBlock::New(0, 18, "--:--", 22);
         this->timeText->SetColor(COLOR("#FFFFFFFF"));
@@ -309,13 +289,13 @@ namespace inst::ui {
         this->butText = TextBlock::New(10, 678, optionsHintText, 20);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
         this->bottomHintSegments = BuildBottomHintSegments(optionsHintText, 10, 20);
-        this->menu = pu::ui::elm::Menu::New(301, 136, 979, COLOR("#FFFFFF00"), 72, (506 / 72), 20);
+        this->menu = inst::theme::Menu::New(301, 136, 979, COLOR("#FFFFFF00"), 72, (506 / 72), 20);
         if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(COLOR("#FFFFFF33"));
-            this->menu->SetScrollbarColor(COLOR("#FFFFFF66"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
         } else {
-            this->menu->SetOnFocusColor(COLOR("#00000033"));
-            this->menu->SetScrollbarColor(COLOR("#17090980"));
+            this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#00000033")));
+            this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
         this->Add(this->topRect);
         this->Add(this->infoRect);
@@ -360,11 +340,9 @@ namespace inst::ui {
         this->remoteFormPanel = Rectangle::New(241, 83, 798, 568, inst::config::oledMode ? COLOR("#000000FA") : COLOR("#170909FA"));
         this->remoteFormTitle = TextBlock::New(270, 104, "Remote", 32);
         this->remoteFormHint = TextBlock::New(270, 614, " Edit/Select     Cancel", 20);
-        this->remoteFormMenu = Menu::New(260, 140, 760, COLOR("#00000000"), 46, 10, 24);
-        this->remoteFormMenu->SetOnFocusColor(inst::config::oledMode ? COLOR("#FFFFFF33") : COLOR("#00000070"));
-        this->remoteProtocolDropdownPanel = Rectangle::New(720, 146, 286, 108, inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
-        this->remoteProtocolDropdownMenu = Menu::New(728, 154, 270, COLOR("#00000000"), 46, 2, 25);
-        this->remoteProtocolDropdownMenu->SetOnFocusColor(inst::config::oledMode ? COLOR("#FFFFFF33") : COLOR("#00000070"));
+        this->remoteFormMenu = std::make_shared<RemoteFormMenu>(this->remoteFormLanProtocolDropdownVisible);
+        this->remoteFormMenu->SetOnFocusColor(inst::theme::Color("highlight",
+            inst::config::oledMode ? COLOR("#FFFFFF33") : COLOR("#00000070")));
         this->remoteFormTitle->SetColor(COLOR("#FFFFFFFF"));
         this->remoteFormHint->SetColor(COLOR("#FFFFFFFF"));
         this->remoteFormShade->SetVisible(false);
@@ -373,16 +351,199 @@ namespace inst::ui {
         this->remoteFormTitle->SetVisible(false);
         this->remoteFormHint->SetVisible(false);
         this->remoteFormMenu->SetVisible(false);
-        this->remoteProtocolDropdownPanel->SetVisible(false);
-        this->remoteProtocolDropdownMenu->SetVisible(false);
         this->Add(this->remoteFormShade);
         this->Add(this->remoteFormBorder);
         this->Add(this->remoteFormPanel);
         this->Add(this->remoteFormTitle);
         this->Add(this->remoteFormHint);
         this->Add(this->remoteFormMenu);
-        this->Add(this->remoteProtocolDropdownPanel);
-        this->Add(this->remoteProtocolDropdownMenu);
+        for (int i = 0; i < 9; ++i) {
+            auto value = TextBlock::New(510, 152 + i * 44, "", 22);
+            value->SetColor(COLOR("#FFFFFFFF"));
+            value->SetVisible(false);
+            this->remoteFormValues.push_back(value);
+            this->Add(value);
+        }
+        this->remoteFormLanProtocolPanel = Rectangle::New(502, 192, 310, 104,
+            inst::config::oledMode ? COLOR("#000000FF") : COLOR("#170909FF"));
+        this->remoteFormLanProtocolMenu = inst::theme::Menu::New(510, 200, 294, COLOR("#00000000"), 44, 2, 22);
+        this->remoteFormLanProtocolMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+        for (const char* label : {"HTTP", "HTTPS"}) {
+            auto item = MenuItem::New(label);
+            item->SetColor(COLOR("#FFFFFFFF"));
+            // Controller A is handled by the page. Key 0 keeps this callback
+            // touch-only, so the A press opening the menu cannot also accept it
+            // when Plutonium dispatches that same input to visible elements.
+            item->AddOnClick([this]() { this->applyRemoteFormLanProtocol(); }, 0);
+            this->remoteFormLanProtocolMenu->AddItem(item);
+        }
+        this->remoteFormLanProtocolPanel->SetVisible(false);
+        this->remoteFormLanProtocolMenu->SetVisible(false);
+        this->Add(this->remoteFormLanProtocolPanel);
+        this->Add(this->remoteFormLanProtocolMenu);
+
+        this->discoveryMenu = inst::theme::Menu::New(310, 140, 950, COLOR("#00000000"), 80, 5, 20);
+        this->discoveryMenu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
+        this->discoveryStatus = TextBlock::New(320, 554, "", 20);
+        this->discoveryStatus->SetColor(COLOR("#FFFFFFFF"));
+        this->discoverySpinner = TextBlock::New(740, 320, "●···", 48);
+        this->discoverySpinner->SetColor(COLOR("#FFFFFFFF"));
+        this->discoverySpinner->SetVisible(false);
+        this->discoveryMenu->SetVisible(false);
+        this->discoveryStatus->SetVisible(false);
+        this->Add(this->discoveryMenu);
+        this->Add(this->discoveryStatus);
+        this->Add(this->discoverySpinner);
+    }
+
+    optionsPage::~optionsPage() {
+        this->stopDiscoveryWorker();
+    }
+
+    void optionsPage::stopDiscoveryWorker() {
+        this->discoveryCancel.store(true);
+        if (this->discoveryThread.joinable()) this->discoveryThread.join();
+    }
+
+    void optionsPage::startDiscovery() {
+        if (this->discoveryThread.joinable()) this->discoveryThread.join();
+        this->discoveryResult = {};
+        this->discoveryCancel.store(false);
+        this->discoveryDone.store(false);
+        this->discoveryVisible = true;
+        this->discoveryFinished = false;
+        this->discoverySpinnerFrame = 0;
+        this->discoverySpinnerLastTick = armGetSystemTick();
+        this->discoverySpinner->SetText("●···");
+        this->discoverySpinner->SetX(785 - this->discoverySpinner->GetTextWidth() / 2);
+        this->discoverySpinner->SetVisible(true);
+        this->menu->SetVisible(false);
+        this->remoteFormShade->SetVisible(false);
+        this->remoteFormBorder->SetVisible(false);
+        this->remoteFormPanel->SetVisible(false);
+        this->remoteFormTitle->SetVisible(false);
+        this->remoteFormHint->SetVisible(false);
+        this->remoteFormMenu->SetVisible(false);
+        for (auto& value : this->remoteFormValues) value->SetVisible(false);
+        this->remoteFormLanProtocolDropdownVisible = false;
+        this->remoteFormLanProtocolPanel->SetVisible(false);
+        this->remoteFormLanProtocolMenu->SetVisible(false);
+        this->pageInfoText->SetVisible(true);
+        this->pageInfoText->SetText("Discover LAN Servers");
+        this->butText->SetVisible(true);
+        const std::string hint = " Cancel";
+        this->butText->SetText(hint);
+        this->bottomHintSegments = BuildBottomHintSegments(hint, 10, 20);
+        this->discoveryMenu->ClearItems();
+        this->discoveryMenu->SetVisible(true);
+        this->discoveryStatus->SetVisible(true);
+        this->discoveryStatus->SetText("Scanning LAN for about three seconds...\nAeroFoil LAN discovery must be enabled; allow UDP 8465.");
+        try {
+            this->discoveryThread = std::thread([this]() {
+                try { this->discoveryResult = inst::discovery::ScanLan(this->discoveryCancel); }
+                catch (...) { this->discoveryResult.error = "Discovery failed: networking or memory unavailable."; }
+                this->discoveryDone.store(true, std::memory_order_release);
+            });
+        } catch (...) {
+            this->discoveryResult.error = "Cannot start discovery worker.";
+            this->discoveryDone.store(true, std::memory_order_release);
+        }
+    }
+
+    void optionsPage::closeDiscovery() {
+        this->discoveryVisible = false;
+        this->discoveryMenu->SetVisible(false);
+        this->discoveryStatus->SetVisible(false);
+        this->discoverySpinner->SetVisible(false);
+        this->menu->SetVisible(true);
+        if (this->remoteFormVisible)
+            this->openRemoteForm(this->remoteFormProfile, this->remoteFormWasActive,
+                this->remoteFormReturnToList, this->remoteFormReturnIndex);
+        else this->closeRemoteList();
+    }
+
+    void optionsPage::updateDiscovery(u64 down) {
+        if (down & HidNpadButton_B) {
+            this->discoveryCancel.store(true);
+            this->discoveryStatus->SetText("Cancelling discovery...");
+        }
+        if (this->discoveryDone.load(std::memory_order_acquire) && !this->discoveryFinished) {
+            if (this->discoveryThread.joinable()) this->discoveryThread.join();
+            this->discoveryFinished = true;
+            this->discoverySpinner->SetVisible(false);
+            for (const auto& server : this->discoveryResult.servers) {
+                auto item = MenuItem::New((server.name.empty() ? "AeroFoil" : server.name) + "\n" +
+                    server.address + ":" + std::to_string(server.port) + "    " + server.version +
+                    (server.isPublic ? "    Public" : "    Private"));
+                item->SetColor(COLOR("#FFFFFFFF"));
+                item->AddOnClick([this]() {
+                    if (this->discoveryVisible && this->discoveryFinished && !this->discoveryCancel.load())
+                        this->updateDiscovery(HidNpadButton_A);
+                });
+                this->discoveryMenu->AddItem(item);
+            }
+            this->discoveryMenu->SetSelectedIndex(0);
+            std::string status = this->discoveryResult.error;
+            if (status.empty()) status = this->discoveryResult.servers.empty()
+                ? "No servers found. Enable LAN discovery and allow UDP 8465."
+                : "Select a server to fill the Remote form. Save Remote to apply it.";
+            this->discoveryStatus->SetText(status + "\nWi-Fi isolation / separate subnets can prevent discovery.");
+            const std::string hint = " Select server     Scan again     Back";
+            this->butText->SetText(hint);
+            this->bottomHintSegments = BuildBottomHintSegments(hint, 10, 20);
+        }
+        if (!this->discoveryFinished) {
+            const u64 now = armGetSystemTick();
+            const u64 stepTicks = (armGetSystemTickFreq() * 140) / 1000;
+            if (now - this->discoverySpinnerLastTick >= stepTicks) {
+                static const char* frames[] = {"●···", "·●··", "··●·", "···●"};
+                this->discoverySpinnerLastTick = now;
+                this->discoverySpinnerFrame = (this->discoverySpinnerFrame + 1) % 4;
+                this->discoverySpinner->SetText(frames[this->discoverySpinnerFrame]);
+                this->discoverySpinner->SetX(785 - this->discoverySpinner->GetTextWidth() / 2);
+            }
+            return;
+        }
+        if (this->discoveryCancel.load()) { this->closeDiscovery(); return; }
+        if (down & HidNpadButton_X) { this->startDiscovery(); return; }
+        if (down & HidNpadButton_A) {
+            const int index = this->discoveryMenu->GetSelectedIndex();
+            if (index < 0 || index >= static_cast<int>(this->discoveryResult.servers.size())) return;
+            const auto server = this->discoveryResult.servers[index];
+            inst::config::RemoteProfile profile = this->remoteFormVisible
+                ? this->remoteFormProfile : inst::config::RemoteProfile{};
+            bool wasActive = this->remoteFormVisible ? this->remoteFormWasActive : true;
+            if (!this->remoteFormVisible) {
+                for (const auto& saved : inst::config::LoadRemotes()) {
+                    if (saved.uid == server.uid || (saved.uid.empty() && inst::config::RemoteMatchesUrl(saved, server.url()))) {
+                        profile = saved;
+                        break;
+                    }
+                }
+            }
+            if (!this->remoteFormVisible) {
+                // Preserve the saved credentials; discovery supplies no login details.
+                if (profile.fileName.empty()) {
+                    profile.username = inst::config::remoteUser;
+                    profile.password = inst::config::remotePass;
+                    profile.legacyMode = inst::config::remoteLegacyMode;
+                }
+            }
+            profile.protocol = "http";
+            profile.host = server.address;
+            profile.port = server.port;
+            profile.path.clear();
+            profile.lanUrl = server.url();
+            profile.uid = server.uid;
+            std::string suggestedWan;
+            if (profile.wanUrl.empty() && !server.remote.empty() &&
+                inst::config::NormalizeRemoteAddress(server.remote, "https", suggestedWan))
+                profile.wanUrl = suggestedWan;
+            if (profile.title.empty()) profile.title = server.name.empty() ? "AeroFoil" : server.name;
+            this->closeDiscovery();
+            this->openRemoteForm(profile, wasActive, this->remoteFormVisible && this->remoteFormReturnToList,
+                this->remoteFormReturnIndex);
+        }
     }
 
     void optionsPage::askToUpdate(std::vector<std::string> updateInfo) {
@@ -428,8 +589,8 @@ namespace inst::ui {
     }
 
     std::string optionsPage::getMenuOptionIcon(bool ourBool) {
-        if(ourBool) return "romfs:/images/icons/check-box-outline.png";
-        else return "romfs:/images/icons/checkbox-blank-outline.png";
+        if(ourBool) return inst::theme::Asset("romfs:/images/icons/check-box-outline.png");
+        else return inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png");
     }
 
     std::string optionsPage::getMenuLanguage(int ourLangCode) {
@@ -466,23 +627,30 @@ namespace inst::ui {
 
     void optionsPage::setSectionNavText() {
         static const std::vector<std::string> sectionLabels = {"General", "Remote", "System"};
+        const bool customHighlight = inst::theme::HasColor("highlight") || inst::theme::HasColor("accent");
         for (size_t i = 0; i < this->sectionTexts.size() && i < sectionLabels.size(); i++) {
             const bool selected = static_cast<int>(i) == this->selectedSection;
-            this->sectionHighlights[i]->SetColor(selected
-                ? (this->tabsFocused
+            auto sectionColor = selected
+                ? inst::theme::Color("highlight", this->tabsFocused
                     ? (inst::config::oledMode ? COLOR("#FFFFFF55") : COLOR("#FFFFFF66"))
                     : (inst::config::oledMode ? COLOR("#FFFFFF33") : COLOR("#FFFFFF40")))
-                : COLOR("#FFFFFF00"));
+                : COLOR("#FFFFFF00");
+            if (selected && customHighlight && !this->tabsFocused) sectionColor.A /= 4;
+            this->sectionHighlights[i]->SetColor(sectionColor);
             this->sectionTexts[i]->SetText(sectionLabels[i]);
-            this->sectionTexts[i]->SetColor(selected ? COLOR("#FFFFFFFF") : (this->tabsFocused ? COLOR("#FFFFFFCC") : COLOR("#FFFFFF99")));
+            this->sectionTexts[i]->SetColor(selected && this->tabsFocused
+                ? inst::theme::Color("selected_text", COLOR("#FFFFFFFF"))
+                : (selected ? COLOR("#FFFFFFFF") : (this->tabsFocused ? COLOR("#FFFFFFCC") : COLOR("#FFFFFF99"))));
         }
 
         // Make the settings-list row highlight clearly reflect which area is active.
-        if (inst::config::oledMode) {
-            this->menu->SetOnFocusColor(this->tabsFocused ? COLOR("#FFFFFF18") : COLOR("#FFFFFF66"));
-        } else {
-            this->menu->SetOnFocusColor(this->tabsFocused ? COLOR("#00000022") : COLOR("#00000070"));
+        auto rowColor = inst::theme::Color("highlight",
+            inst::config::oledMode ? COLOR("#FFFFFF66") : COLOR("#00000070"));
+        if (this->tabsFocused) {
+            if (customHighlight) rowColor.A /= 4;
+            else rowColor = inst::config::oledMode ? COLOR("#FFFFFF18") : COLOR("#00000022");
         }
+        this->menu->SetOnFocusColor(rowColor);
     }
 
     void optionsPage::setSettingsMenuText() {
@@ -504,6 +672,7 @@ namespace inst::ui {
             addItem("options.menu_items.sound"_lang, true, inst::config::soundEnabled);
             addItem("options.menu_items.oled"_lang, true, inst::config::oledMode);
             addItem("options.menu_items.mtp_album"_lang, true, inst::config::mtpExposeAlbum);
+            addItem("options.menu_items.usb_hdd_hidden"_lang, true, inst::config::usbHddShowHiddenFiles);
             return;
         }
 
@@ -517,6 +686,7 @@ namespace inst::ui {
             const std::string activeLabel = inst::util::shortenString(ActiveRemoteLabel(remotes), 38, false);
             addItem("Remotes: " + activeLabel + " (" + std::to_string(remotes.size()) + " saved)", false, false);
             addItem("Add new Remote", false, false);
+            addItem("Discover LAN Servers", false, false);
             const std::string uaMode = inst::config::remoteLegacyMode ? "tinfoil" : inst::config::httpUserAgentMode;
             addItem("User-Agent profile: " + GetUserAgentProfileLabel(uaMode), false, false);
             auto items = this->menu->GetItems();
@@ -538,6 +708,11 @@ namespace inst::ui {
         addItem("options.menu_items.language"_lang + this->getMenuLanguage(inst::config::languageSetting), false, false);
         addItem("options.menu_items.check_update"_lang, false, false);
         addItem("options.menu_items.credits"_lang, false, false);
+        std::string themeName = inst::config::themeFile.empty() ? "options.theme_default"_lang : inst::theme::Name();
+        for (const auto& choice : inst::theme::Discover(inst::config::appDir)) {
+            if (choice.file == inst::config::themeFile) { themeName = choice.name; break; }
+        }
+        addItem("options.menu_items.theme"_lang + themeName, false, false);
     }
 
     void optionsPage::refreshOptions(bool resetSelection) {
@@ -545,6 +720,82 @@ namespace inst::ui {
         this->setSectionNavText();
         this->setSettingsMenuText();
         if (resetSelection) this->menu->SetSelectedIndex(0);
+    }
+
+    void optionsPage::ShowThemePicker() {
+        this->selectedSection = 2;
+        this->openThemeList();
+    }
+
+    void optionsPage::openThemeList() {
+        this->themeChoices = inst::theme::Discover(inst::config::appDir);
+        this->themeChoices.insert(this->themeChoices.begin(), {"", "options.theme_default"_lang});
+        this->themeListVisible = true;
+        this->tabsFocused = false;
+        this->touchActive = false;
+        this->touchMoved = false;
+        this->bottomHintTouch = {};
+        this->pageInfoText->SetText("options.theme_picker"_lang);
+        const auto hint = "options.theme_picker_hint"_lang;
+        this->butText->SetText(hint);
+        this->bottomHintSegments = BuildBottomHintSegments(hint, 10, 20);
+        this->menu->ClearItems();
+        int selected = 0;
+        for (std::size_t i = 0; i < this->themeChoices.size(); ++i) {
+            const auto& choice = this->themeChoices[i];
+            const bool active = choice.file == inst::config::themeFile;
+            std::string label = choice.name;
+            if (!choice.file.empty()) label += " (" + choice.file + ")";
+            auto item = MenuItem::New(inst::util::shortenString(label, 70, false));
+            item->SetColor(COLOR("#FFFFFFFF"));
+            item->SetIcon(this->getMenuOptionIcon(active));
+            this->menu->AddItem(item);
+            if (active) selected = static_cast<int>(i);
+        }
+        this->menu->SetSelectedIndex(selected);
+        this->setSectionNavText();
+    }
+
+    void optionsPage::closeThemeList() {
+        this->themeListVisible = false;
+        this->touchActive = false;
+        this->bottomHintTouch = {};
+        this->pageInfoText->SetText("options.title"_lang);
+        const std::string hint = " Select/Change    / Section     Back";
+        this->butText->SetText(hint);
+        this->bottomHintSegments = BuildBottomHintSegments(hint, 10, 20);
+        this->refreshOptions();
+        this->menu->SetSelectedIndex(5);
+        this->lockedMenuIndex = 5;
+    }
+
+    void optionsPage::handleThemeListInput(u64 down, pu::ui::Touch pos) {
+        if (down & HidNpadButton_B) { this->closeThemeList(); return; }
+        bool tapped = false;
+        if (!pos.IsEmpty()) {
+            if (!this->touchActive) {
+                this->touchActive = true;
+                this->touchMoved = false;
+                this->touchStartX = pos.X;
+                this->touchStartY = pos.Y;
+                const int x = this->menu->GetProcessedX(), y = this->menu->GetProcessedY();
+                this->touchRegion = pos.X >= x && pos.X <= x + this->menu->GetWidth() &&
+                    pos.Y >= y && pos.Y <= y + this->menu->GetHeight() ? 2 : 0;
+            } else if (std::abs(pos.X - this->touchStartX) > 12 || std::abs(pos.Y - this->touchStartY) > 12) {
+                this->touchMoved = true;
+            }
+        } else if (this->touchActive) {
+            tapped = !this->touchMoved && this->touchRegion == 2;
+            this->touchActive = false;
+        }
+        if ((down & HidNpadButton_A) || tapped) {
+            const int index = this->menu->GetSelectedIndex();
+            if (index < 0 || index >= static_cast<int>(this->themeChoices.size())) return;
+            const auto choice = this->themeChoices[index];
+            inst::config::themeFile = choice.file;
+            inst::config::setConfig();
+            mainApp->RequestThemeReload();
+        }
     }
 
     void optionsPage::openRemoteList(int selectedIndex) {
@@ -590,6 +841,9 @@ namespace inst::ui {
 
     void optionsPage::openRemoteForm(const inst::config::RemoteProfile& remote, bool wasActive, bool returnToList, int returnIndex) {
         this->remoteFormProfile = remote;
+        if (this->remoteFormProfile.lanUrl.empty() && this->remoteFormProfile.wanUrl.empty() && !remote.host.empty())
+            inst::config::NormalizeRemoteProfile(this->remoteFormProfile);
+        this->remoteFormLanProtocol = this->remoteFormProfile.lanUrl.rfind("https://", 0) == 0 ? "https" : "http";
         if (this->remoteFormProfile.protocol != "https")
             this->remoteFormProfile.protocol = "http";
         if (this->remoteFormProfile.host.empty())
@@ -601,8 +855,9 @@ namespace inst::ui {
         this->remoteFormReturnToList = returnToList;
         this->remoteFormReturnIndex = returnIndex;
         this->remoteFormVisible = true;
-        this->remoteProtocolDropdownVisible = false;
-        this->remoteModeDropdownVisible = false;
+        this->remoteFormLanProtocolDropdownVisible = false;
+        this->remoteFormLanProtocolPanel->SetVisible(false);
+        this->remoteFormLanProtocolMenu->SetVisible(false);
         this->menu->SetVisible(false);
         this->pageInfoText->SetVisible(false);
         this->butText->SetVisible(false);
@@ -612,21 +867,22 @@ namespace inst::ui {
         this->remoteFormTitle->SetVisible(true);
         this->remoteFormHint->SetVisible(true);
         this->remoteFormMenu->SetVisible(true);
+        for (auto& value : this->remoteFormValues) value->SetVisible(true);
         this->refreshRemoteForm();
     }
 
     void optionsPage::closeRemoteForm() {
         this->remoteFormVisible = false;
-        this->remoteProtocolDropdownVisible = false;
-        this->remoteModeDropdownVisible = false;
+        this->remoteFormLanProtocolDropdownVisible = false;
+        this->remoteFormLanProtocolPanel->SetVisible(false);
+        this->remoteFormLanProtocolMenu->SetVisible(false);
         this->remoteFormShade->SetVisible(false);
         this->remoteFormBorder->SetVisible(false);
         this->remoteFormPanel->SetVisible(false);
         this->remoteFormTitle->SetVisible(false);
         this->remoteFormHint->SetVisible(false);
         this->remoteFormMenu->SetVisible(false);
-        this->remoteProtocolDropdownPanel->SetVisible(false);
-        this->remoteProtocolDropdownMenu->SetVisible(false);
+        for (auto& value : this->remoteFormValues) value->SetVisible(false);
         this->pageInfoText->SetVisible(true);
         this->butText->SetVisible(true);
         this->menu->SetVisible(true);
@@ -640,104 +896,111 @@ namespace inst::ui {
     }
 
     void optionsPage::refreshRemoteForm() {
-        const auto fieldValue = [](const std::string& value, const std::string& emptyValue) {
-            return value.empty() ? emptyValue : inst::util::shortenString(value, 34, false);
-        };
-        const std::string protocol = this->remoteFormProfile.protocol == "https" ? "HTTPS" : "HTTP";
         const std::string mode = this->remoteFormProfile.legacyMode ? "Legacy Mode (Tinfoil)" : "CyberFoil Mode";
-        const std::string path = this->remoteFormProfile.path.empty() ? "/" : this->remoteFormProfile.path;
-        const std::string password = this->remoteFormProfile.password.empty() ? "Not set" : "Set";
-        const std::string favourite = this->remoteFormProfile.favourite ? "Yes" : "No";
-        const std::vector<std::string> rows = {
-            "Protocol                                      " + protocol,
-            "Mode                                          " + mode,
-            "Host                                          " + fieldValue(this->remoteFormProfile.host, "Required"),
-            "Port                                          " + std::to_string(this->remoteFormProfile.port),
-            "Path                                          " + fieldValue(path, "/"),
-            "Username                                      " + fieldValue(this->remoteFormProfile.username, "Not set"),
-            "Password                                      " + password,
-            "Title                                         " + fieldValue(this->remoteFormProfile.title, "Required"),
-            "Favourite                                     " + favourite,
-            "Save Remote"
+        const std::string connection = this->remoteFormProfile.connection == "lan" ? "LAN only" :
+            (this->remoteFormProfile.connection == "wan" ? "WAN only" : "Auto (LAN first)");
+        const auto addressOnly = [](const std::string& url) {
+            const auto scheme = url.find("://");
+            return scheme == std::string::npos ? url : url.substr(scheme + 3);
+        };
+        const std::vector<std::string> labels = {
+            "Mode", "LAN protocol", "LAN URL", "Remote URL", "Connection", "Username", "Password", "Title", "Favourite", "Save Remote"
+        };
+        const std::vector<std::string> values = {
+            mode, this->remoteFormLanProtocol == "https" ? "HTTPS" : "HTTP",
+            addressOnly(this->remoteFormProfile.lanUrl), addressOnly(this->remoteFormProfile.wanUrl), connection,
+            this->remoteFormProfile.username, this->remoteFormProfile.password.empty() ? "Not set" : "Set",
+            this->remoteFormProfile.title, this->remoteFormProfile.favourite ? "Yes" : "No"
         };
         const int selected = std::max(0, this->remoteFormMenu->GetSelectedIndex());
         this->remoteFormMenu->ClearItems();
-        for (const auto& row : rows) {
-            auto item = MenuItem::New(row);
+        for (const auto& label : labels) {
+            auto item = MenuItem::New(label);
             item->SetColor(COLOR("#FFFFFFFF"));
             this->remoteFormMenu->AddItem(item);
         }
-        this->remoteFormMenu->SetSelectedIndex(std::min(selected, static_cast<int>(rows.size()) - 1));
+        this->remoteFormMenu->SetSelectedIndex(std::min(selected, static_cast<int>(labels.size()) - 1));
+        for (std::size_t row = 0; row < values.size(); ++row) {
+            auto& text = this->remoteFormValues[row];
+            std::string display = values[row].empty() ? (row == 7 ? "Required" : "Not set") : values[row];
+            for (char& c : display) if (static_cast<unsigned char>(c) < 32 || c == 127) c = ' ';
+            // Bound measurement work, preserving UTF-8 boundaries. Values are
+            // clipped for display only; the editor receives the full saved URL.
+            std::size_t end = std::min<std::size_t>(display.size(), 512);
+            while (end < display.size() && end > 0 && (static_cast<unsigned char>(display[end]) & 0xc0) == 0x80) --end;
+            const bool shortened = end < display.size();
+            display.resize(end);
+            text->SetText(display + (shortened ? "..." : ""));
+            if (text->GetTextWidth() > 480) {
+                std::vector<std::size_t> boundaries{0};
+                for (std::size_t i = 1; i <= display.size(); ++i)
+                    if (i == display.size() || (static_cast<unsigned char>(display[i]) & 0xc0) != 0x80) boundaries.push_back(i);
+                std::size_t low = 0, high = boundaries.size() - 1;
+                while (low < high) {
+                    const auto middle = (low + high + 1) / 2;
+                    text->SetText(display.substr(0, boundaries[middle]) + "...");
+                    if (text->GetTextWidth() <= 480) low = middle;
+                    else high = middle - 1;
+                }
+                text->SetText(display.substr(0, boundaries[low]) + "...");
+            }
+            text->SetY(152 + static_cast<int>(row) * 44 + (44 - text->GetTextHeight()) / 2);
+        }
+    }
+
+    void optionsPage::applyRemoteFormLanProtocol() {
+        const std::string protocol = this->remoteFormLanProtocolMenu->GetSelectedIndex() == 1 ? "https" : "http";
+        if (protocol != this->remoteFormLanProtocol && !this->remoteFormProfile.lanUrl.empty()) {
+            std::string previousProtocol, host, path;
+            int port = 0;
+            if (inst::config::ParseRemoteUrl(this->remoteFormProfile.lanUrl, previousProtocol, host, port, path)) {
+                const int previousDefault = previousProtocol == "https" ? 443 : 80;
+                if (port == previousDefault) port = protocol == "https" ? 443 : 80;
+                this->remoteFormProfile.lanUrl = protocol + "://" + host + ":" + std::to_string(port) + path;
+            }
+        }
+        this->remoteFormLanProtocol = protocol;
+        this->remoteFormLanProtocolDropdownVisible = false;
+        this->remoteFormLanProtocolPanel->SetVisible(false);
+        this->remoteFormLanProtocolMenu->SetVisible(false);
+        this->refreshRemoteForm();
     }
 
     void optionsPage::editRemoteFormField() {
         const int field = this->remoteFormMenu->GetSelectedIndex();
         if (field == 0) {
-            this->remoteProtocolDropdownVisible = true;
-            this->remoteProtocolDropdownMenu->ClearItems();
-            auto http = MenuItem::New("HTTP");
-            auto https = MenuItem::New("HTTPS");
-            http->SetColor(COLOR("#FFFFFFFF"));
-            https->SetColor(COLOR("#FFFFFFFF"));
-            this->remoteProtocolDropdownMenu->AddItem(http);
-            this->remoteProtocolDropdownMenu->AddItem(https);
-            this->remoteProtocolDropdownMenu->SetSelectedIndex(this->remoteFormProfile.protocol == "https" ? 1 : 0);
-            this->remoteProtocolDropdownPanel->SetY(146);
-            this->remoteProtocolDropdownMenu->SetY(154);
-            this->remoteProtocolDropdownPanel->SetVisible(true);
-            this->remoteProtocolDropdownMenu->SetVisible(true);
-            return;
-        }
-        if (field == 1) {
-            this->remoteModeDropdownVisible = true;
-            this->remoteProtocolDropdownMenu->ClearItems();
-            auto cyberFoil = MenuItem::New("CyberFoil Mode");
-            auto legacy = MenuItem::New("Legacy Mode (Tinfoil)");
-            cyberFoil->SetColor(COLOR("#FFFFFFFF"));
-            legacy->SetColor(COLOR("#FFFFFFFF"));
-            this->remoteProtocolDropdownMenu->AddItem(cyberFoil);
-            this->remoteProtocolDropdownMenu->AddItem(legacy);
-            this->remoteProtocolDropdownMenu->SetSelectedIndex(this->remoteFormProfile.legacyMode ? 1 : 0);
-            this->remoteProtocolDropdownPanel->SetY(192);
-            this->remoteProtocolDropdownMenu->SetY(200);
-            this->remoteProtocolDropdownPanel->SetVisible(true);
-            this->remoteProtocolDropdownMenu->SetVisible(true);
-            return;
-        }
-        if (field == 2) {
-            const std::string endpoint = TrimString(inst::util::softwareKeyboard("Enter Remote host or IP", this->remoteFormProfile.host, 200));
-            if (!endpoint.empty()) {
-                const bool hasScheme = endpoint.rfind("http://", 0) == 0 || endpoint.rfind("https://", 0) == 0;
-                const std::string rawEndpoint = hasScheme ? endpoint : (this->remoteFormProfile.protocol + "://" + endpoint);
-                std::string protocol, host, path;
-                int port = inst::config::DefaultPortForProtocol(this->remoteFormProfile.protocol);
-                if (inst::config::ParseRemoteUrl(rawEndpoint, protocol, host, port, path) && !host.empty()) {
-                    this->remoteFormProfile.protocol = protocol;
-                    this->remoteFormProfile.host = host;
-                    if (RemoteInputHasExplicitPort(endpoint))
-                        this->remoteFormProfile.port = port;
-                    if (!path.empty())
-                        this->remoteFormProfile.path = path;
-                } else {
-                    mainApp->CreateShowDialog("Invalid Remote", "Host format is invalid.", {"common.ok"_lang}, true);
+            const int choice = mainApp->CreateShowDialog("Remote mode", "Choose compatibility mode.",
+                {"CyberFoil", "Tinfoil (legacy)", "common.cancel"_lang}, false);
+            if (choice == 0 || choice == 1) this->remoteFormProfile.legacyMode = choice == 1;
+        } else if (field == 1) {
+            this->remoteFormLanProtocolDropdownVisible = true;
+            this->remoteFormLanProtocolMenu->SetSelectedIndex(this->remoteFormLanProtocol == "https" ? 1 : 0);
+            this->remoteFormLanProtocolPanel->SetVisible(true);
+            this->remoteFormLanProtocolMenu->SetVisible(true);
+        } else if (field == 2 || field == 3) {
+            const bool lan = field == 2;
+            auto& endpoint = lan ? this->remoteFormProfile.lanUrl : this->remoteFormProfile.wanUrl;
+            const int action = mainApp->CreateShowDialog(lan ? "LAN URL" : "Remote URL",
+                lan ? "Enter an IP or hostname and port. The LAN protocol is selected separately." :
+                    "Enter an IP or hostname and port. HTTPS is used automatically.",
+                {"Edit", "Clear", "common.cancel"_lang}, false);
+            if (action == 1) endpoint.clear();
+            else if (action == 0) {
+                const auto scheme = endpoint.find("://");
+                const auto currentAddress = scheme == std::string::npos ? endpoint : endpoint.substr(scheme + 3);
+                const auto value = TrimString(inst::util::softwareKeyboard("Enter IP or hostname[:port]", currentAddress, 512));
+                if (!value.empty()) {
+                    std::string normalized;
+                    if (inst::config::NormalizeRemoteAddress(value, lan ? this->remoteFormLanProtocol : "https", normalized)) endpoint = normalized;
+                    else mainApp->CreateShowDialog("Invalid address", lan ?
+                        "Enter a valid IP or hostname and port, without a scheme. Choose HTTP or HTTPS under LAN protocol." :
+                        "Enter a valid IP or hostname and port. Remote connections require HTTPS.", {"common.ok"_lang}, true);
                 }
             }
-        } else if (field == 3) {
-            const std::string value = TrimString(inst::util::numericKeyboard("Enter Remote port (1-65535)", std::to_string(this->remoteFormProfile.port), 5));
-            if (value.empty()) {
-                this->refreshRemoteForm();
-                return;
-            }
-            try {
-                const int port = std::stoi(value);
-                if (port <= 0 || port > 65535)
-                    throw std::out_of_range("port");
-                this->remoteFormProfile.port = port;
-            } catch (...) {
-                mainApp->CreateShowDialog("Invalid port", "Port must be between 1 and 65535.", {"common.ok"_lang}, true);
-            }
         } else if (field == 4) {
-            this->remoteFormProfile.path = inst::config::NormalizeRemotePath(inst::util::softwareKeyboard("Enter Remote path (optional, e.g. /remote)", this->remoteFormProfile.path, 200));
+            const int choice = mainApp->CreateShowDialog("Connection preference", "Auto tries LAN connectivity first, then WAN if LAN is unreachable.",
+                {"Auto", "LAN only", "WAN only", "common.cancel"_lang}, false);
+            if (choice >= 0 && choice < 3) this->remoteFormProfile.connection = choice == 0 ? "auto" : (choice == 1 ? "lan" : "wan");
         } else if (field == 5) {
             this->remoteFormProfile.username = inst::util::softwareKeyboard("options.remote.user_hint"_lang, this->remoteFormProfile.username, 100);
         } else if (field == 6) {
@@ -754,11 +1017,14 @@ namespace inst::ui {
     }
 
     void optionsPage::saveRemoteForm() {
-        if (this->remoteFormProfile.host.empty() || this->remoteFormProfile.title.empty()) {
-            mainApp->CreateShowDialog("Invalid Remote", this->remoteFormProfile.host.empty() ? "Host is required." : "Title is required.", {"common.ok"_lang}, true);
+        std::string error;
+        // Clear compatibility fields so deliberately clearing both URLs cannot
+        // resurrect the old endpoint through legacy migration.
+        this->remoteFormProfile.host.clear();
+        if (!inst::config::NormalizeRemoteProfile(this->remoteFormProfile, &error) || this->remoteFormProfile.title.empty()) {
+            mainApp->CreateShowDialog("Invalid Remote", error.empty() ? "Title is required." : error, {"common.ok"_lang}, true);
             return;
         }
-        std::string error;
         if (!inst::config::SaveRemote(this->remoteFormProfile, &error)) {
             mainApp->CreateShowDialog("Failed to save Remote", error.empty() ? "Unknown error." : error, {"common.ok"_lang}, true);
             return;
@@ -796,6 +1062,7 @@ namespace inst::ui {
                     inst::ui::mainApp->CreateShowDialog("Failed to delete Remote", "Could not remove the Remote file.", {"common.ok"_lang}, true);
                 } else if (IsActiveRemote(remote)) {
                     inst::config::remoteUrl.clear();
+                    inst::config::remoteProfileFile.clear();
                     inst::config::remoteUser.clear();
                     inst::config::remotePass.clear();
                     inst::config::setConfig();
@@ -888,30 +1155,21 @@ namespace inst::ui {
             Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);
         }
         inst::util::playNavigationClickIfNeeded(Down);
+        if (this->themeListVisible) {
+            this->handleThemeListInput(Down, Pos);
+            return;
+        }
+        if (this->discoveryVisible) {
+            this->updateDiscovery(Down);
+            return;
+        }
         if (this->remoteFormVisible) {
-            if (this->remoteProtocolDropdownVisible || this->remoteModeDropdownVisible) {
+            if (this->remoteFormLanProtocolDropdownVisible) {
                 if (Down & HidNpadButton_B) {
-                    this->remoteProtocolDropdownVisible = false;
-                    this->remoteModeDropdownVisible = false;
-                    this->remoteProtocolDropdownPanel->SetVisible(false);
-                    this->remoteProtocolDropdownMenu->SetVisible(false);
-                    return;
-                }
-                if (Down & HidNpadButton_A) {
-                    if (this->remoteModeDropdownVisible) {
-                        this->remoteFormProfile.legacyMode = this->remoteProtocolDropdownMenu->GetSelectedIndex() == 1;
-                    } else {
-                        const int previousDefaultPort = inst::config::DefaultPortForProtocol(this->remoteFormProfile.protocol);
-                        this->remoteFormProfile.protocol = this->remoteProtocolDropdownMenu->GetSelectedIndex() == 1 ? "https" : "http";
-                        if (this->remoteFormProfile.port == previousDefaultPort)
-                            this->remoteFormProfile.port = inst::config::DefaultPortForProtocol(this->remoteFormProfile.protocol);
-                    }
-                    this->remoteProtocolDropdownVisible = false;
-                    this->remoteModeDropdownVisible = false;
-                    this->remoteProtocolDropdownPanel->SetVisible(false);
-                    this->remoteProtocolDropdownMenu->SetVisible(false);
-                    this->refreshRemoteForm();
-                }
+                    this->remoteFormLanProtocolDropdownVisible = false;
+                    this->remoteFormLanProtocolPanel->SetVisible(false);
+                    this->remoteFormLanProtocolMenu->SetVisible(false);
+                } else if (Down & HidNpadButton_A) this->applyRemoteFormLanProtocol();
                 return;
             }
             if (Down & HidNpadButton_B) {
@@ -1029,19 +1287,30 @@ namespace inst::ui {
             std::vector<std::string> languageList;
             int selectedIndex = this->menu->GetSelectedIndex();
             if (this->selectedSection == 0) {
-                static const int kGeneralMap[] = {0, 1, 10, 2, 3, 6, 7, 8};
+                static const int kGeneralMap[] = {0, 1, 10, 2, 3, 6, 7, 8, 29};
                 if ((selectedIndex < 0) || (selectedIndex >= static_cast<int>(sizeof(kGeneralMap) / sizeof(kGeneralMap[0])))) return;
                 selectedIndex = kGeneralMap[selectedIndex];
             } else if (this->selectedSection == 1) {
-                static const int kRemoteMap[] = {20, 21, 25, 26, 12, 13, 27, 24, 19, 23, 22};
+                static const int kRemoteMap[] = {20, 21, 28, 25, 26, 12, 13, 27, 24, 19, 23, 22};
                 if ((selectedIndex < 0) || (selectedIndex >= static_cast<int>(sizeof(kRemoteMap) / sizeof(kRemoteMap[0])))) return;
                 selectedIndex = kRemoteMap[selectedIndex];
             } else {
-                static const int kSystemMap[] = {4, 5, 16, 17, 18};
+                static const int kSystemMap[] = {4, 5, 16, 17, 18, 30};
                 if ((selectedIndex < 0) || (selectedIndex >= static_cast<int>(sizeof(kSystemMap) / sizeof(kSystemMap[0])))) return;
                 selectedIndex = kSystemMap[selectedIndex];
             }
             switch (selectedIndex) {
+                case 30:
+                    this->openThemeList();
+                    break;
+                case 29:
+                    inst::config::usbHddShowHiddenFiles = !inst::config::usbHddShowHiddenFiles;
+                    inst::config::setConfig();
+                    this->refreshOptions();
+                    break;
+                case 28:
+                    this->startDiscovery();
+                    break;
                 case 0:
                     inst::config::ignoreReqVers = !inst::config::ignoreReqVers;
                     inst::config::setConfig();
@@ -1126,20 +1395,7 @@ namespace inst::ui {
                     inst::config::setConfig();
                     {
                         auto keepAlive = mainApp->optionspage;
-                        mainApp->mainPage = MainPage::New();
-                        mainApp->instpage = instPage::New();
-                        mainApp->sdinstPage = sdInstPage::New();
-                        mainApp->netinstPage = netInstPage::New();
-                        mainApp->usbinstPage = usbInstPage::New();
-                        mainApp->remoteinstPage = remoteInstPage::New();
-                        mainApp->optionspage = optionsPage::New();
-                        mainApp->mainPage->SetOnInput(std::bind(&MainPage::onInput, mainApp->mainPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->netinstPage->SetOnInput(std::bind(&netInstPage::onInput, mainApp->netinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->remoteinstPage->SetOnInput(std::bind(&remoteInstPage::onInput, mainApp->remoteinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->sdinstPage->SetOnInput(std::bind(&sdInstPage::onInput, mainApp->sdinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->usbinstPage->SetOnInput(std::bind(&usbInstPage::onInput, mainApp->usbinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->instpage->SetOnInput(std::bind(&instPage::onInput, mainApp->instpage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-                        mainApp->optionspage->SetOnInput(std::bind(&optionsPage::onInput, mainApp->optionspage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+                        mainApp->RecreateLayouts();
                         mainApp->LoadLayout(mainApp->optionspage);
                     }
                     break;

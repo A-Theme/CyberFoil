@@ -3,6 +3,7 @@
 #include "util/config.hpp"
 #include "util/util.hpp"
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <cstdio>
 #include <filesystem>
@@ -12,7 +13,9 @@
 #include "mtp_server.hpp"
 #include "switch.h"
 
-#define COLOR(hex) pu::ui::Color::FromHex(hex)
+#include "util/theme.hpp"
+
+#define COLOR(hex) inst::theme::Palette(hex)
 
 namespace inst::ui {
     MainApplication *mainApp;
@@ -83,13 +86,67 @@ namespace inst::ui {
         return FormatOneDecimal(mib) + " MiB";
     }
 
+    bool MainApplication::CallForRender() {
+        // The install pump owns the frame cadence. Progress producers must
+        // neither render from workers nor recursively poll input from callbacks.
+        if (!IsUiThread() || IsInstallWorkActive()) return true;
+        return pu::ui::Application::CallForRender();
+    }
+
+    int MainApplication::CreateShowDialog(const std::string& title, const std::string& content,
+        std::vector<std::string> options, bool useLastOptionAsCancel, const std::string& icon) {
+        return RunOnUiThread([=, this] {
+            return pu::ui::Application::CreateShowDialog(title, content, options, useLastOptionAsCancel, icon);
+        });
+    }
+
+    void MainApplication::RunInstallWork(std::function<void()> work) {
+        if (!IsUiThread()) throw std::logic_error("Install pump must start on the UI thread");
+        if (installWorkActive.exchange(true)) return;
+        instPage::loadInstallScreen(false);
+        std::atomic<bool> done{false};
+        std::exception_ptr failure;
+        std::thread worker;
+        try {
+            worker = std::thread([&] {
+                try { work(); }
+                catch (...) { failure = std::current_exception(); }
+                done.store(true, std::memory_order_release);
+            });
+        } catch (...) {
+            installWorkActive = false;
+            instPage::loadMainMenu();
+            throw;
+        }
+        // Rendering polls input every frame even while the worker waits for
+        // HTTP headers, reads local content, writes NCAs, or rolls back a cancel.
+        while (!done.load(std::memory_order_acquire))
+            pu::ui::Application::CallForRender();
+        worker.join();
+        uiDispatcher.drain();
+        installWorkActive = false;
+        instPage::loadMainMenu();
+        if (failure) {
+            try { std::rethrow_exception(failure); }
+            catch (const std::exception& e) { CreateShowDialog("Installation failed", e.what(), {"OK"}, true); }
+            catch (...) { CreateShowDialog("Installation failed", "Unexpected installation error.", {"OK"}, true); }
+        }
+    }
+
     void MainApplication::Close() {
+        if (IsInstallWorkActive()) {
+            instPage::requestInstallCancel();
+            return; // Renderer and services must outlive the installation worker.
+        }
+        if (this->optionspage)
+            this->optionspage->stopDiscoveryWorker();
         if (this->remoteinstPage)
             this->remoteinstPage->stopIconDownloadWorker();
         pu::ui::Application::Close();
     }
 
     void MainApplication::RefreshInputDevice(bool force) {
+        if (!IsUiThread()) return;
         const AppletFocusState focus = appletGetFocusState();
         const bool regainedFocus = (focus != this->lastFocusState) && (focus == AppletFocusState_InFocus);
         this->lastFocusState = focus;
@@ -103,31 +160,131 @@ namespace inst::ui {
         }
     }
 
+    void MainApplication::CreateLayoutStep(int step) {
+        switch (step) {
+        case 0:
+            this->mainPage = MainPage::New();
+            this->mainPage->SetOnInput(std::bind(&MainPage::onInput, this->mainPage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        case 1:
+            this->netinstPage = netInstPage::New();
+            this->netinstPage->SetOnInput(std::bind(&netInstPage::onInput, this->netinstPage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        case 2:
+            this->remoteinstPage = remoteInstPage::New();
+            this->remoteinstPage->SetOnInput(std::bind(&remoteInstPage::onInput, this->remoteinstPage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        case 3:
+            this->sdinstPage = sdInstPage::New();
+            this->sdinstPage->SetOnInput(std::bind(&sdInstPage::onInput, this->sdinstPage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        case 4:
+            this->usbinstPage = usbInstPage::New();
+            this->usbinstPage->SetOnInput(std::bind(&usbInstPage::onInput, this->usbinstPage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        case 5:
+            this->hddinstPage = hddInstPage::New();
+            this->hddinstPage->SetOnInput(std::bind(&hddInstPage::onInput, this->hddinstPage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        case 6:
+            this->instpage = instPage::New();
+            this->instpage->SetOnInput(std::bind(&instPage::onInput, this->instpage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        case 7:
+            this->optionspage = optionsPage::New();
+            this->optionspage->SetOnInput(std::bind(&optionsPage::onInput, this->optionspage.get(), std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+            break;
+        }
+    }
+
+    void MainApplication::RecreateLayouts() {
+        if (!IsUiThread()) throw std::logic_error("Layouts must be recreated on the UI thread");
+        if (this->optionspage) this->optionspage->stopDiscoveryWorker();
+        if (this->remoteinstPage) this->remoteinstPage->stopIconDownloadWorker();
+        for (int step = 0; step < 8; ++step) this->CreateLayoutStep(step);
+    }
+
+    void MainApplication::ShowThemeLoading() {
+        this->themeLoadingLayout = pu::ui::Layout::New();
+        this->themeLoadingLayout->SetBackgroundColor(pu::ui::Color::FromHex("#10151FFF"));
+        auto label = pu::ui::elm::TextBlock::New(0, 388, "options.theme_loading"_lang, 28);
+        label->SetColor(pu::ui::Color::FromHex("#FFFFFFFF"));
+        label->SetX((1280 - label->GetTextWidth()) / 2);
+        this->themeLoadingLayout->Add(label);
+        this->themeLoadingDots.clear();
+        this->themeLoadingFrame = 0;
+        for (int i = 0; i < 12; ++i) {
+            const double angle = i * 6.283185307179586 / 12.0;
+            auto dot = pu::ui::elm::Rectangle::New(
+                634 + static_cast<int>(std::sin(angle) * 38),
+                304 - static_cast<int>(std::cos(angle) * 38),
+                12, 12, pu::ui::Color::FromHex("#FFFFFF33"), 6);
+            this->themeLoadingDots.push_back(dot);
+            this->themeLoadingLayout->Add(dot);
+        }
+        auto track = pu::ui::elm::Rectangle::New(440, 452, 400, 6, pu::ui::Color::FromHex("#FFFFFF33"), 3);
+        this->themeLoadingProgress = pu::ui::elm::Rectangle::New(440, 452, 0, 6, pu::ui::Color::FromHex("#FFFFFFFF"), 3);
+        this->themeLoadingLayout->Add(track);
+        this->themeLoadingLayout->Add(this->themeLoadingProgress);
+        this->themeLoadingLayout->AddThread([this] {
+            // Advance between loading stages; no rendering or input runs on a worker.
+            const unsigned head = this->themeLoadingFrame++ % 12;
+            for (unsigned i = 0; i < this->themeLoadingDots.size(); ++i) {
+                const unsigned distance = (head + 12 - i) % 12;
+                const u8 alpha = distance < 5 ? static_cast<u8>(255 - distance * 40) : 45;
+                this->themeLoadingDots[i]->SetColor(pu::ui::Color(255, 255, 255, alpha));
+            }
+        });
+        this->LoadLayout(this->themeLoadingLayout);
+    }
+
+    void MainApplication::RequestThemeReload() {
+        if (!IsUiThread()) throw std::logic_error("Theme selection must run on the UI thread");
+        this->themeReloadPending = true;
+    }
+
+    void MainApplication::ApplyPendingTheme() {
+        if (IsInstallWorkActive() || inst::mtp::IsStreamInstallActive()) return;
+        if (this->themeReloadStage < 0) {
+            if (!this->themeReloadPending) return;
+            this->themeReloadPending = false;
+            this->ShowThemeLoading();
+            this->themeReloadStage = 0;
+            return; // Present the loading screen before any blocking work.
+        }
+        if (this->themeReloadStage == 0) {
+            if (this->optionspage) this->optionspage->stopDiscoveryWorker();
+            if (this->remoteinstPage) this->remoteinstPage->stopIconDownloadWorker();
+            inst::theme::Load(inst::config::appDir, inst::config::themeFile);
+        } else if (this->themeReloadStage <= 8) {
+            // Create one layout per frame so the spinner can animate between stages.
+            this->CreateLayoutStep(this->themeReloadStage - 1);
+        } else {
+            this->optionspage->ShowThemePicker();
+            this->LoadLayout(this->optionspage);
+            this->themeReloadStage = -1;
+            this->themeLoadingLayout.reset();
+            this->themeLoadingDots.clear();
+            this->themeLoadingProgress.reset();
+            return;
+        }
+        ++this->themeReloadStage;
+        this->themeLoadingProgress->SetWidth(400 * this->themeReloadStage / 9);
+    }
+
     void MainApplication::OnLoad() {
         mainApp = this;
         this->RefreshInputDevice(true);
 
         Language::Load();
+        inst::theme::Load(inst::config::appDir, inst::config::themeFile);
 
-        this->mainPage = MainPage::New();
-        this->netinstPage = netInstPage::New();
-        this->remoteinstPage = remoteInstPage::New();
-        this->sdinstPage = sdInstPage::New();
-        this->usbinstPage = usbInstPage::New();
-        this->hddinstPage = hddInstPage::New();
-        this->instpage = instPage::New();
-        this->optionspage = optionsPage::New();
-        this->mainPage->SetOnInput(std::bind(&MainPage::onInput, this->mainPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-        this->netinstPage->SetOnInput(std::bind(&netInstPage::onInput, this->netinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-        this->remoteinstPage->SetOnInput(std::bind(&remoteInstPage::onInput, this->remoteinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-        this->sdinstPage->SetOnInput(std::bind(&sdInstPage::onInput, this->sdinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-        this->usbinstPage->SetOnInput(std::bind(&usbInstPage::onInput, this->usbinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-        this->hddinstPage->SetOnInput(std::bind(&hddInstPage::onInput, this->hddinstPage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-        this->instpage->SetOnInput(std::bind(&instPage::onInput, this->instpage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
-        this->optionspage->SetOnInput(std::bind(&optionsPage::onInput, this->optionspage, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+        this->RecreateLayouts();
         this->LoadLayout(this->mainPage);
 
         this->AddThread([this]() {
+            this->uiDispatcher.drain();
+            this->ApplyPendingTheme();
             this->RefreshInputDevice();
         });
 
@@ -167,6 +324,7 @@ namespace inst::ui {
             }
 
             if (active && !last_active) {
+                instPage::loadInstallScreen(false);
                 last_name = inst::mtp::GetStreamInstallName();
                 if (last_name.empty()) {
                     last_name = "MTP Install";
@@ -298,7 +456,9 @@ namespace inst::ui {
                 }
             }
 
+            if (!active && last_active) instPage::finishInstall();
             if (inst::mtp::ConsumeStreamInstallComplete()) {
+                instPage::finishInstall();
                 this->instpage->installBar->SetVisible(true);
                 this->instpage->installBar->SetProgress(100);
                 const std::string done_msg = last_name + "inst.info_page.desc1"_lang + "\n\n" + "inst.info_page.complete"_lang + "\n\n" + "inst.mtp.waiting.hint"_lang;

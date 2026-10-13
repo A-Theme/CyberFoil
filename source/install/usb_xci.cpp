@@ -22,6 +22,7 @@ SOFTWARE.
 
 #include "install/usb_xci.hpp"
 
+#include <atomic>
 #include <switch.h>
 #include <algorithm>
 #include <malloc.h>
@@ -38,7 +39,7 @@ SOFTWARE.
 
 namespace tin::install::xci
 {
-    bool stopThreadsUsbXci;
+    std::atomic<bool> stopThreadsUsbXci{false};
     std::string errorMessageUsbXci;
 
     USBXCI::USBXCI(std::string xciName) :
@@ -68,14 +69,17 @@ namespace tin::install::xci
         {
             while (sizeRemaining && !stopThreadsUsbXci)
             {
+                if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
                 tmpSizeRead = awoo_usbCommsRead(buf, std::min(sizeRemaining, (u64)0x800000), 5000000000);
                 if (tmpSizeRead == 0) THROW_FORMAT(("inst.usb.error"_lang).c_str());
                 sizeRemaining -= tmpSizeRead;
 
                 while (true)
                 {
+                    if (stopThreadsUsbXci || inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
                     if (args->bufferedPlaceholderWriter->CanAppendData(tmpSizeRead))
                         break;
+                    svcSleepThread(1000000);
                 }
 
                 args->bufferedPlaceholderWriter->AppendData(buf, tmpSizeRead);
@@ -98,8 +102,11 @@ namespace tin::install::xci
 
         while (!args->bufferedPlaceholderWriter->IsPlaceholderComplete() && !stopThreadsUsbXci)
         {
+            if (inst::ui::instPage::isInstallCancelRequested()) { stopThreadsUsbXci = true; break; }
             if (args->bufferedPlaceholderWriter->CanWriteSegmentToPlaceholder())
                 args->bufferedPlaceholderWriter->WriteSegmentToPlaceholder();
+            else
+                svcSleepThread(1000000);
         }
 
         return 0;
@@ -134,6 +141,7 @@ namespace tin::install::xci
         inst::ui::instPage::setInstBarPerc(0);
         while (!bufferedPlaceholderWriter.IsBufferDataComplete() && !stopThreadsUsbXci)
         {
+            if (inst::ui::instPage::isInstallCancelRequested()) { stopThreadsUsbXci = true; break; }
             u64 newTime = armGetSystemTick();
 
             if (newTime - startTime >= freq)
@@ -155,6 +163,7 @@ namespace tin::install::xci
                 inst::ui::instPage::setInstInfoText("inst.info_page.downloading"_lang + inst::util::formatUrlString(ncaFileName) + "inst.info_page.at"_lang + std::to_string(speed).substr(0, std::to_string(speed).size()-4) + "MB/s");
                 inst::ui::instPage::setInstBarPerc((double)downloadProgress);
             }
+            svcSleepThread(1000000);
         }
         inst::ui::instPage::setInstBarPerc(100);
 
@@ -164,8 +173,16 @@ namespace tin::install::xci
 
         inst::ui::instPage::setInstInfoText("inst.info_page.top_info0"_lang + ncaFileName + "...");
         inst::ui::instPage::setInstBarPerc(0);
+        u64 lastWriteUiTick = 0;
         while (!bufferedPlaceholderWriter.IsPlaceholderComplete() && !stopThreadsUsbXci)
         {
+            if (inst::ui::instPage::isInstallCancelRequested()) { stopThreadsUsbXci = true; break; }
+            const u64 now = armGetSystemTick();
+            if (lastWriteUiTick != 0 && now - lastWriteUiTick < freq / 5) {
+                svcSleepThread(1000000);
+                continue;
+            }
+            lastWriteUiTick = now;
             int installProgress = (int)(((double)bufferedPlaceholderWriter.GetSizeWrittenToPlaceholder() / (double)bufferedPlaceholderWriter.GetTotalDataSize()) * 100.0);
 #ifdef APP_DEBUG_LOG
             u64 installSizeMB = bufferedPlaceholderWriter.GetSizeWrittenToPlaceholder() / 1000000;
@@ -178,6 +195,7 @@ namespace tin::install::xci
         thrd_join(usbThread, NULL);
         thrd_join(writeThread, NULL);
         bufferedPlaceholderWriter.close();
+        if (inst::ui::instPage::isInstallCancelRequested()) THROW_FORMAT("Installation canceled.");
         if (stopThreadsUsbXci) throw std::runtime_error(errorMessageUsbXci.c_str());
     }
 

@@ -887,7 +887,9 @@ NcaWriter::NcaWriter(const NcmContentId& ncaId, std::shared_ptr<nx::ncm::Content
 
 NcaWriter::~NcaWriter()
 {
-     NcaWriter::close();
+     // Cleanup must not terminate the process while unwinding cancellation or
+     // a write failure. The installation transaction removes the placeholder.
+     try { NcaWriter::close(); } catch (...) {}
 }
 
 void NcaWriter::close()
