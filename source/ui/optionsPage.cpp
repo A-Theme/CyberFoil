@@ -664,6 +664,7 @@ namespace inst::ui {
             addItem("options.menu_items.sound"_lang, true, inst::config::soundEnabled);
             addItem("options.menu_items.oled"_lang, true, inst::config::oledMode);
             addItem("options.menu_items.mtp_album"_lang, true, inst::config::mtpExposeAlbum);
+            addItem("options.menu_items.usb_hdd_hidden"_lang, true, inst::config::usbHddShowHiddenFiles);
             return;
         }
 
@@ -1193,7 +1194,7 @@ namespace inst::ui {
             std::vector<std::string> languageList;
             int selectedIndex = this->menu->GetSelectedIndex();
             if (this->selectedSection == 0) {
-                static const int kGeneralMap[] = {0, 1, 10, 2, 3, 6, 7, 8};
+                static const int kGeneralMap[] = {0, 1, 10, 2, 3, 6, 7, 8, 29};
                 if ((selectedIndex < 0) || (selectedIndex >= static_cast<int>(sizeof(kGeneralMap) / sizeof(kGeneralMap[0])))) return;
                 selectedIndex = kGeneralMap[selectedIndex];
             } else if (this->selectedSection == 1) {
@@ -1206,6 +1207,11 @@ namespace inst::ui {
                 selectedIndex = kSystemMap[selectedIndex];
             }
             switch (selectedIndex) {
+                case 29:
+                    inst::config::usbHddShowHiddenFiles = !inst::config::usbHddShowHiddenFiles;
+                    inst::config::setConfig();
+                    this->refreshOptions();
+                    break;
                 case 28:
                     this->startDiscovery();
                     break;

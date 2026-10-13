@@ -161,6 +161,8 @@
       "delete_info": " 已安裝完成！是否從 USB 裝置中刪除此檔案？",
       "delete_info_multi": " 個檔案已成功安裝！是否從 USB 裝置中刪除這些檔案？",
       "delete_desc": "安裝完成後便不再需要保留原始檔案",
+      "show_hidden": "顯示隱藏檔案",
+      "hide_hidden": "隱藏隱藏檔案",
       "buttons": " 選擇檔案     全選     安裝所選的檔案     說明     取消"
     },
     "usb": {
@@ -250,6 +252,7 @@
   },
   "options": {
     "menu_items": {
+      "usb_hdd_hidden": "顯示 USB 磁碟上的隱藏檔案",
       "ignore_firm": "略過檢查遊戲最低系統版本要求",
       "nca_verify": "進行安裝前驗證NCA簽名",
       "boost_mode": "在進行安裝時啟用\"超頻\"模式",

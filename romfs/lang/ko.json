@@ -161,6 +161,8 @@
       "delete_info": " 이(가) 설치되었습니다. USB 드라이브에서 삭제하시겠습니까?",
       "delete_info_multi": " 개의 파일이 성공적으로 설치되었습니다. USB 드라이브에서 삭제하시겠습니까?",
       "delete_desc": "설치가 완료된 후에는 원본 파일이 더 이상 필요하지 않습니다",
+      "show_hidden": "숨김 파일 표시",
+      "hide_hidden": "숨김 파일 숨기기",
       "buttons": " 파일 선택     모두 선택     파일 설치     도움말     취소"
     },
     "usb": {
@@ -250,6 +252,7 @@
   },
   "options": {
     "menu_items": {
+      "usb_hdd_hidden": "USB 드라이브의 숨김 파일 표시",
       "ignore_firm": "타이틀에 필요한 최소 펌웨어 버전 무시",
       "nca_verify": "설치 전에 NCA 서명 확인",
       "boost_mode": "설치 중 \"부스트 모드\" 활성화",

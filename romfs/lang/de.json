@@ -161,6 +161,8 @@
       "delete_info": " installiert! Von dem USB-Laufwerk löschen?",
       "delete_info_multi": " Dateien erfolgreich installiert! Von dem USB-Laufwerk löschen?",
       "delete_desc": "Die Originaldateien werden nach der Installation nicht mehr benötigt",
+      "show_hidden": "Versteckte zeigen",
+      "hide_hidden": "Versteckte ausblenden",
       "buttons": " Datei auswählen     Alle auswählen     Datei(en) installieren     Hilfe     Abbrechen"
     },
     "usb": {
@@ -250,6 +252,7 @@
   },
   "options": {
     "menu_items": {
+      "usb_hdd_hidden": "Versteckte Dateien auf USB-Laufwerken anzeigen",
       "ignore_firm": "Ignoriere minimale Firmware Version des Titels",
       "nca_verify": "Verifiziere NCA Signatur vor der Installation",
       "boost_mode": "Aktiviere \"Boost-Modus\" während der Installation",

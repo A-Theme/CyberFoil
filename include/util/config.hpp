@@ -43,6 +43,7 @@ namespace inst::config {
     extern bool soundEnabled;
     extern bool oledMode;
     extern bool mtpExposeAlbum;
+    extern bool usbHddShowHiddenFiles;
     extern bool usbAck;
     extern bool remoteHideInstalled;
     extern bool remoteHideInstalledSection;

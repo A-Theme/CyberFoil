@@ -28,6 +28,7 @@ namespace inst::config {
     bool soundEnabled;
     bool oledMode;
     bool mtpExposeAlbum;
+    bool usbHddShowHiddenFiles = false;
     bool ignoreReqVers;
     bool overClock;
     bool usbAck;
@@ -907,6 +908,7 @@ namespace inst::config {
             {"soundEnabled", soundEnabled},
             {"oledMode", oledMode},
             {"mtpExposeAlbum", mtpExposeAlbum},
+            {"usbHddShowHiddenFiles", usbHddShowHiddenFiles},
             {"ignoreReqVers", ignoreReqVers},
             {"languageSetting", languageSetting},
             {"overClock", overClock},
@@ -944,6 +946,7 @@ namespace inst::config {
         soundEnabled = true;
         oledMode = true;
         mtpExposeAlbum = false;
+        usbHddShowHiddenFiles = false;
         ignoreReqVers = true;
         overClock = true;
         usbAck = false;
@@ -980,6 +983,7 @@ namespace inst::config {
             if (j.contains("soundEnabled")) soundEnabled = j["soundEnabled"].get<bool>();
             if (j.contains("oledMode")) oledMode = j["oledMode"].get<bool>();
             if (j.contains("mtpExposeAlbum")) mtpExposeAlbum = j["mtpExposeAlbum"].get<bool>();
+            if (j.contains("usbHddShowHiddenFiles")) usbHddShowHiddenFiles = j["usbHddShowHiddenFiles"].get<bool>();
             if (j.contains("ignoreReqVers")) ignoreReqVers = j["ignoreReqVers"].get<bool>();
             if (j.contains("languageSetting")) languageSetting = j["languageSetting"].get<int>();
             if (j.contains("overClock")) overClock = j["overClock"].get<bool>();
@@ -1013,6 +1017,7 @@ namespace inst::config {
                 "soundEnabled",
                 "oledMode",
                 "mtpExposeAlbum",
+                "usbHddShowHiddenFiles",
                 "ignoreReqVers",
                 "languageSetting",
                 "overClock",

@@ -161,6 +161,8 @@
       "delete_info": " instalado! Eliminar da unidade USB?",
       "delete_info_multi": " ficheiros instalados com sucesso! Eliminar da unidade USB?",
       "delete_desc": "Os ficheiros originais deixam de ser necessários depois de instalados",
+      "show_hidden": "Mostrar ocultos",
+      "hide_hidden": "Ocultar ocultos",
       "buttons": " Selecionar Ficheiro     Selecionar Todos     Instalar Ficheiro(s)     Ajuda     Cancelar"
     },
     "usb": {
@@ -250,6 +252,7 @@
   },
   "options": {
     "menu_items": {
+      "usb_hdd_hidden": "Mostrar arquivos ocultos em unidades USB",
       "ignore_firm": "Ignorar o requisito de firmeware mínimo imposto pelo título",
       "nca_verify": "Verificar a assinatura NCA antes da instalação",
       "boost_mode": "Ativar \"boost mode\" durante as instalações",

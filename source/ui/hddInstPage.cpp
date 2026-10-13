@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include "ui/MainApplication.hpp"
 #include "ui/mainPage.hpp"
@@ -74,7 +76,7 @@ namespace inst::ui {
         this->pageInfoText->SetColor(COLOR("#FFFFFFFF"));
         this->butText = TextBlock::New(10, 678, "inst.hdd.buttons"_lang, 20);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
-        this->bottomHintSegments = BuildBottomHintSegments("inst.hdd.buttons"_lang, 10, 20);
+        this->refreshBottomHint();
         this->menu = pu::ui::elm::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 50, 10);
         if (inst::config::oledMode) {
             this->menu->SetOnFocusColor(COLOR("#FFFFFF33"));
@@ -110,7 +112,23 @@ namespace inst::ui {
         this->Add(this->menu);
     }
 
+    void hddInstPage::refreshBottomHint() {
+        const std::string base = queueAddMode
+            ? " Select     Add to queue     Queue"
+            : "inst.hdd.buttons"_lang;
+        const std::string action = inst::config::usbHddShowHiddenFiles
+            ? "inst.hdd.hide_hidden"_lang : "inst.hdd.show_hidden"_lang;
+        this->butText->SetText(base + "     " + action);
+        int fontSize = 20;
+        this->butText->SetFontSize(fontSize);
+        while (fontSize > 14 && this->butText->GetTextWidth() > 1260) {
+            this->butText->SetFontSize(--fontSize);
+        }
+        this->bottomHintSegments = BuildBottomHintSegments(this->butText->GetText(), 10, fontSize);
+    }
+
     void hddInstPage::drawMenuItems(bool clearItems, std::filesystem::path ourPath) {
+        this->refreshBottomHint();
         if (clearItems) this->selectedTitles = {};
         const auto normalizedPath = normalizeRootPath(ourPath);
         const auto normalizedParent = normalizeRootPath(normalizedPath.parent_path());
@@ -126,6 +144,25 @@ namespace inst::ui {
         } catch (std::exception& e) {
             this->drawMenuItems(false, this->currentDir.parent_path());
             return;
+        }
+        if (!inst::config::usbHddShowHiddenFiles) {
+            const auto hidden = [](const std::filesystem::path& path) {
+                auto name = path.filename().string();
+                if (!name.empty() && name.front() == '.') return true;
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char ch) {
+                    return static_cast<char>(std::tolower(ch));
+                });
+                return name == "$recycle.bin" || name == "system volume information" ||
+                    name == "desktop.ini" || name == "thumbs.db";
+            };
+            const auto removeHidden = [&](auto& paths) {
+                paths.erase(std::remove_if(paths.begin(), paths.end(), hidden), paths.end());
+            };
+            removeHidden(this->ourDirectories);
+            removeHidden(this->ourFiles);
+            // Hidden selections must not remain queued for a later install.
+            removeHidden(this->selectedTitles);
+            removeHidden(this->queueSavedSelection);
         }
         if (this->currentDir != this->rootDir) {
             std::string itm = "..";
@@ -175,6 +212,7 @@ namespace inst::ui {
     }
 
     void hddInstPage::selectNsp(int selectedIndex) {
+        if (selectedIndex < 0 || selectedIndex >= static_cast<int>(this->menu->GetItems().size())) return;
         if (queueAddMode) {
             int fileIndex = selectedIndex - static_cast<int>(ourDirectories.size()) - (currentDir != rootDir ? 1 : 0);
             if (fileIndex < 0 || fileIndex >= static_cast<int>(ourFiles.size()) || !instPage::canEnqueueTitle(ourFiles[fileIndex].string())) return;
@@ -197,8 +235,7 @@ namespace inst::ui {
         queueSavedSelection = selectedTitles; selectedTitles.clear(); queueAddMode = true;
         touchTapActive = false; hasLastTap = false; bottomHintTouch = {};
         drawMenuItems(false, currentDir);
-        butText->SetText(" Select     Add to queue     Queue");
-        bottomHintSegments = BuildBottomHintSegments(butText->GetText(), 10, 20);
+        refreshBottomHint();
         mainApp->LoadLayout(mainApp->hddinstPage);
     }
 
@@ -206,8 +243,7 @@ namespace inst::ui {
         if (!queueAddMode) return;
         queueAddMode = false; selectedTitles = std::move(queueSavedSelection);
         touchTapActive = false; hasLastTap = false; bottomHintTouch = {};
-        butText->SetText("inst.hdd.buttons"_lang);
-        bottomHintSegments = BuildBottomHintSegments(butText->GetText(), 10, 20);
+        refreshBottomHint();
     }
 
     void hddInstPage::startInstall() {
@@ -232,6 +268,15 @@ namespace inst::ui {
             Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);
         }
         inst::util::playNavigationClickIfNeeded(Down);
+        if (Down & HidNpadButton_Minus) {
+            inst::config::usbHddShowHiddenFiles = !inst::config::usbHddShowHiddenFiles;
+            inst::config::setConfig();
+            this->hasLastTap = false;
+            this->lastTapIndex = -1;
+            this->drawMenuItems(false, this->currentDir);
+            if (!this->menu->GetItems().empty()) this->menu->SetSelectedIndex(0);
+            return;
+        }
         if (queueAddMode && (Down & HidNpadButton_B)) { instPage::showQueue(); return; }
         if (queueAddMode && (Down & HidNpadButton_Y)) {
             if (!selectedTitles.empty()) selectedTitles.clear();
@@ -306,6 +351,7 @@ namespace inst::ui {
             inst::ui::mainApp->CreateShowDialog("inst.hdd.help.title"_lang, "inst.hdd.help.desc"_lang, {"common.ok"_lang}, true);
         }
         if (Down & HidNpadButton_Plus) {
+            if (this->menu->GetItems().empty()) return;
             if (this->selectedTitles.size() == 0 && this->menu->GetItems()[this->menu->GetSelectedIndex()]->GetIcon() == "romfs:/images/icons/checkbox-blank-outline.png") {
                 this->selectNsp(this->menu->GetSelectedIndex());
             }

@@ -59,6 +59,7 @@ namespace inst::ui {
             int lastTapIndex = -1;
             std::chrono::steady_clock::time_point lastTapTime{};
             void followDirectory();
+            void refreshBottomHint();
             void selectNsp(int selectedIndex);
     };
 }

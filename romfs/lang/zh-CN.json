@@ -161,6 +161,8 @@
       "delete_info": " 已安装！是否从 USB 存储设备中删除？",
       "delete_info_multi": " 个文件安装成功！是否从 USB 存储设备中删除？",
       "delete_desc": "安装完成后不再需要保留原始文件",
+      "show_hidden": "显示隐藏文件",
+      "hide_hidden": "隐藏隐藏文件",
       "buttons": " 选择     全选     安装     帮助     取消"
     },
     "usb": {
@@ -250,6 +252,7 @@
   },
   "options": {
     "menu_items": {
+      "usb_hdd_hidden": "显示 USB 驱动器上的隐藏文件",
       "ignore_firm": "忽略游戏最低固件版本要求",
       "nca_verify": "安装前验证 NCA 签名",
       "boost_mode": "安装时启用\"增强模式\"",
