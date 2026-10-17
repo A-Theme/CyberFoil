@@ -3,7 +3,9 @@
 #include <pu/Plutonium>
 #include "remoteInstall.hpp"
 #include "ui/bottomHint.hpp"
+#include "ui/overflowText.hpp"
 #include "util/save_sync.hpp"
+#include "util/theme.hpp"
 #include <atomic>
 #include <cstddef>
 #include <condition_variable>
@@ -93,6 +95,27 @@ namespace inst::ui {
             BrowseSortMode browseSortMode = BrowseSortMode::Default;
             BottomHintTouchState bottomHintTouch;
             std::vector<BottomHintSegment> bottomHintSegments;
+            BottomHintTouchState sectionHintTouch;
+            std::vector<BottomHintSegment> secondaryHintSegments;
+            TextBlock::Ref secondaryHintText;
+            TextBlock::Ref previousSectionText;
+            TextBlock::Ref nextSectionText;
+            TextBlock::Ref browseSummaryText;
+            TextBlock::Ref focusedTitleText;
+            TextBlock::Ref focusedMetadataText;
+            Rectangle::Ref sectionHighlight;
+            Rectangle::Ref browseDetailPanel;
+            std::vector<Rectangle::Ref> gridCardBacks;
+            std::vector<TextBlock::Ref> gridCaptions;
+            OverflowText::Ref gridCaptionMarquee;
+            std::string gridCaptionMarqueeKey;
+            std::vector<TextBlock::Ref> listRowMetadata;
+            std::vector<TextBlock::Ref> listRowSizes;
+            std::vector<TextBlock::Ref> listRowSelections;
+            std::vector<Image::Ref> listRowCovers;
+            std::vector<std::string> listRowCoverKeys;
+            std::string browseDecorationKey;
+            void updateBrowseDecorations();
             int selectedSectionIndex = 0;
             std::string searchQuery;
             std::string previewKey;
@@ -138,9 +161,9 @@ namespace inst::ui {
             int holdDirection = 0;
             u64 holdStartTick = 0;
             u64 lastHoldTick = 0;
+            bool isFastListScrolling() const;
             int listMarqueeIndex = -1;
             int listVisibleTopIndex = 0;
-            int listPrevSelectedIndex = -1;
             int listMarqueeOffset = 0;
             int listMarqueeMaxOffset = 0;
             std::string listMarqueeFullLabel;
@@ -168,13 +191,14 @@ namespace inst::ui {
             Rectangle::Ref topRect;
             Rectangle::Ref infoRect;
             Rectangle::Ref botRect;
-            pu::ui::elm::Menu::Ref menu;
+            inst::theme::Menu::Ref menu;
             Image::Ref infoImage;
             Image::Ref previewImage;
             Rectangle::Ref gridHighlight;
             std::vector<Image::Ref> gridImages;
             std::vector<Rectangle::Ref> remoteGridSelectHighlights;
-            std::vector<Image::Ref> remoteGridSelectIcons;
+            std::vector<TextBlock::Ref> remoteGridSelectIcons;
+            std::vector<Rectangle::Ref> remoteGridSelectBadgeBacks;
             TextBlock::Ref gridTitleText;
             TextBlock::Ref imageLoadingText;
             Rectangle::Ref listMarqueeMaskRect;

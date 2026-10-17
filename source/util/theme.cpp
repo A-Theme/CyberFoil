@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <unordered_map>
+#include <utility>
 #include <SDL2/SDL_image.h>
 #include "util/error.hpp"
 #include "util/json.hpp"
@@ -202,6 +203,24 @@ namespace inst::theme {
         SetScrollbarColor(inst::theme::Color("scrollbar", GetScrollbarColor()));
     }
 
+    void Menu::SetSelectedIndex(s32 index) {
+        const auto count = static_cast<s32>(GetItems().size());
+        if (index < 0 || index >= count) return;
+        pu::ui::elm::Menu::SetSelectedIndex(index);
+        const auto rows = GetNumberOfItemsToShow();
+        // Match Plutonium's explicit-selection viewport, including short lists.
+        visibleTopIndex = index >= count - rows ? std::max<s32>(0, count - rows)
+            : (index < rows ? 0 : index);
+    }
+
+    s32 Menu::GetVisibleTopIndex() {
+        return std::clamp<s32>(visibleTopIndex, 0, std::max<s32>(0, static_cast<s32>(GetItems().size()) - 1));
+    }
+
+    void Menu::SetOnRowsRendered(std::function<void()> callback) {
+        onRowsRendered = std::move(callback);
+    }
+
     void Menu::OnInput(u64 down, u64 up, u64 held, pu::ui::Touch pos) {
         // Plutonium delays right-stick movement even on its first press.
         // Route directions through the left-stick path for identical behavior.
@@ -214,6 +233,14 @@ namespace inst::theme {
                 HidNpadButton_StickRLeft | HidNpadButton_StickRRight);
         };
         pu::ui::elm::Menu::OnInput(normalizeStick(down), normalizeStick(up), normalizeStick(held), pos);
+        if (!GetItems().empty()) {
+            // Ordinary movement/touch preserves the viewport unless selection
+            // crosses an edge. Wrapping naturally moves it to the first/last page.
+            const auto index = GetSelectedIndex();
+            const auto rows = GetNumberOfItemsToShow();
+            if (index < visibleTopIndex) visibleTopIndex = index;
+            else if (index >= visibleTopIndex + rows) visibleTopIndex = index - rows + 1;
+        }
     }
 
     void Menu::OnRender(pu::ui::render::Renderer::Ref& drawer, s32 x, s32 y) {
@@ -229,10 +256,13 @@ namespace inst::theme {
                     focusedItem = item;
                     item->SetColor(selectedColor);
                     // Rebuild text textures once per focus change, not on every frame.
-                    pu::ui::elm::Menu::SetSelectedIndex(index);
+                    this->SetSelectedIndex(index);
                 }
             }
         }
         pu::ui::elm::Menu::OnRender(drawer, x, y);
+        // Row overlays follow the viewport used for this frame, before the
+        // layout forwards this frame's input to the menu.
+        if (onRowsRendered) onRowsRendered();
     }
 }

@@ -34,15 +34,20 @@
 #define ResetRemoteDlcTrace() ((void)0)
 
 namespace {
-    constexpr int kGridCols = 10;
-    constexpr int kGridRows = 4;
-    constexpr int kGridTileWidth = 120;
-    constexpr int kGridTileHeight = 120;
-    constexpr int kGridGap = 6;
+    constexpr int kGridCols = 7;
+    constexpr int kGridRows = 3;
+    constexpr int kGridTileWidth = 136;
+    constexpr int kGridTileHeight = 136;
+    constexpr int kGridGap = 32;
     constexpr int kGridWidth = (kGridCols * kGridTileWidth) + ((kGridCols - 1) * kGridGap);
     constexpr int kGridStartX = (1280 - kGridWidth) / 2;
-    constexpr int kGridStartY = 120;
+    constexpr int kGridStartY = 148;
     constexpr int kGridItemsPerPage = kGridCols * kGridRows;
+    constexpr int kBrowseListX = 24;
+    constexpr int kBrowseListY = 150;
+    constexpr int kBrowseListWidth = 840;
+    constexpr int kBrowseRowHeight = 68;
+    constexpr int kBrowseVisibleRows = 7;
     constexpr int kListMarqueeStartDelayMs = 2000;
     constexpr int kListMarqueeEndPauseMs = 260;
     constexpr int kListMarqueeFadeDurationMs = 260;
@@ -103,19 +108,6 @@ namespace {
     };
 
     bool TryParseHexU64(const std::string& hex, std::uint64_t& out);
-
-    int ComputeListNameLimit(const std::string& suffix)
-    {
-        int nameLimit = 56;
-        if (!suffix.empty()) {
-            int maxSuffix = static_cast<int>(suffix.size()) + 1;
-            if (nameLimit > maxSuffix)
-                nameLimit -= maxSuffix;
-        }
-        if (nameLimit < 8)
-            nameLimit = 8;
-        return nameLimit;
-    }
 
     pu::ui::Color BlendOverOpaque(const pu::ui::Color& base, const pu::ui::Color& overlay)
     {
@@ -413,6 +405,25 @@ namespace {
             boundaries.push_back(i);
         }
         return boundaries;
+    }
+
+    std::string ClipBrowseText(const std::string& text, int fontSize, int width) {
+        const auto font = pu::ui::render::LoadDefaultFont(fontSize);
+        const auto fallback = pu::ui::render::LoadSharedFont(pu::ui::render::SharedFont::NintendoExtended, fontSize);
+        const auto fits = [&](const std::string& value) {
+            int measuredWidth = 0, measuredHeight = 0;
+            return font && TTF_SizeUTF8(font, fallback, value.c_str(), &measuredWidth, &measuredHeight) == 0
+                && measuredWidth <= width;
+        };
+        if (fits(text)) return text;
+        const auto boundaries = BuildUtf8Boundaries(text);
+        int low = 0, high = static_cast<int>(boundaries.size()) - 1, best = 0;
+        while (low <= high) {
+            const int mid = (low + high) / 2;
+            if (fits(text.substr(0, boundaries[mid]) + "...")) { best = mid; low = mid + 1; }
+            else high = mid - 1;
+        }
+        return text.substr(0, boundaries[best]) + "...";
     }
 
     bool FitsSingleLineMenuRender(const std::string& text, int fontSize, int maxWidth, int maxHeight)
@@ -978,7 +989,7 @@ namespace inst::ui {
         this->batteryOutline = Rectangle::New(0, 0, 24, 12, COLOR("#FFFFFF66"));
         this->batteryFill = Rectangle::New(0, 0, 0, 10, COLOR("#4CD964FF"));
         this->batteryCap = Rectangle::New(0, 0, 3, 6, COLOR("#FFFFFF66"));
-        this->pageInfoText = TextBlock::New(10, 81, "", 34);
+        this->pageInfoText = TextBlock::New(10, 81, "", 26);
         this->pageInfoText->SetColor(COLOR("#FFFFFFFF"));
         this->loadingProgressText = TextBlock::New(0, 320, "", 24);
         this->loadingProgressText->SetColor(COLOR("#FFFFFFFF"));
@@ -995,13 +1006,25 @@ namespace inst::ui {
         this->loadingDetailText = TextBlock::New(260, 420, "", 20);
         this->loadingDetailText->SetColor(COLOR("#FFFFFFBB"));
         this->loadingDetailText->SetVisible(false);
-        this->searchInfoText = TextBlock::New(0, 91, "", 20);
+        this->searchInfoText = TextBlock::New(24, 116, "", 16);
         this->searchInfoText->SetColor(COLOR("#FFFFFFFF"));
         this->searchInfoText->SetVisible(false);
-        this->butText = TextBlock::New(10, 678, "", 20);
+        this->butText = TextBlock::New(24, 672, "", 18);
         this->butText->SetColor(COLOR("#FFFFFFFF"));
+        this->secondaryHintText = TextBlock::New(24, 698, "", 16);
+        this->secondaryHintText->SetColor(inst::theme::Color("muted_text", COLOR("#A8A8B8FF")));
+        this->secondaryHintText->SetVisible(false);
         this->setButtonsText("inst.remote.buttons_loading"_lang);
-        this->menu = inst::theme::Menu::New(0, 136, 1280, COLOR("#FFFFFF00"), 36, 14, 22);
+        this->menu = inst::theme::Menu::New(kBrowseListX, kBrowseListY, kBrowseListWidth, COLOR("#17171CCC"), kBrowseRowHeight, kBrowseVisibleRows, 22);
+        this->menu->SetOnRowsRendered([this] {
+            if (this->remoteGridMode || this->loadingProgressText->IsVisible()) return;
+            const int top = this->menu->GetVisibleTopIndex();
+            if (top != this->listVisibleTopIndex) {
+                this->listVisibleTopIndex = top;
+                this->updateListMarquee(false);
+                this->updateBrowseDecorations();
+            }
+        });
         if (inst::config::oledMode) {
             this->menu->SetOnFocusColor(inst::theme::Color("highlight", COLOR("#FFFFFF33")));
             this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#FFFFFF66")));
@@ -1010,11 +1033,10 @@ namespace inst::ui {
             this->menu->SetScrollbarColor(inst::theme::Color("scrollbar", COLOR("#17090980")));
         }
         this->infoImage = Image::New(34, 90, inst::theme::Asset("romfs:/images/icons/remote-connection-waiting.png"));
-        this->previewImage = Image::New(900, 230, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
-        this->previewImage->SetWidth(320);
-        this->previewImage->SetHeight(320);
-        auto highlightColor = inst::theme::Color("highlight", inst::config::oledMode ? COLOR("#FFFFFF66") : COLOR("#FFFFFF33"));
-        this->gridHighlight = Rectangle::New(0, 0, kGridTileWidth + 8, kGridTileHeight + 8, highlightColor);
+        this->previewImage = Image::New(920, 170, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
+        this->previewImage->SetWidth(304);
+        this->previewImage->SetHeight(304);
+        this->gridHighlight = Rectangle::New(0, 0, kGridTileWidth + 8, kGridTileHeight + 8, inst::theme::Color("accent", COLOR("#FF4D4DFF")), 8);
         this->gridHighlight->SetVisible(false);
         this->gridImages.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
@@ -1024,7 +1046,7 @@ namespace inst::ui {
             img->SetVisible(false);
             this->gridImages.push_back(img);
         }
-        auto selectedColor = inst::theme::Color("accent", COLOR("#34C75966"));
+        auto selectedColor = pu::ui::Color::FromHex("#34C759FF");
         this->remoteGridSelectHighlights.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
             auto highlight = Rectangle::New(0, 0, kGridTileWidth + 8, kGridTileHeight + 8, selectedColor);
@@ -1033,16 +1055,18 @@ namespace inst::ui {
         }
         this->remoteGridSelectIcons.reserve(kGridItemsPerPage);
         for (int i = 0; i < kGridItemsPerPage; i++) {
-            auto icon = Image::New(0, 0, inst::theme::Asset("romfs:/images/icons/title_selected.png"));
-            icon->SetWidth(120);
-            icon->SetHeight(120);
+            auto badge = Rectangle::New(0, 0, 56, 56, pu::ui::Color::FromHex("#147D43FF"), 28);
+            badge->SetVisible(false);
+            this->remoteGridSelectBadgeBacks.push_back(badge);
+            auto icon = TextBlock::New(0, 0, "✓", 40);
+            icon->SetColor(pu::ui::Color::FromHex("#FFFFFFFF"));
             icon->SetVisible(false);
             this->remoteGridSelectIcons.push_back(icon);
         }
         this->gridTitleText = TextBlock::New(10, 649, "", 18);
         this->gridTitleText->SetColor(inst::theme::Color("selected_text", COLOR("#FFFFFFFF")));
         this->gridTitleText->SetVisible(false);
-        this->imageLoadingText = TextBlock::New(0, 98, "Fetching images...", 18);
+        this->imageLoadingText = TextBlock::New(0, 116, "Fetching images...", 16);
         this->imageLoadingText->SetColor(COLOR("#FFFFFFFF"));
         this->imageLoadingText->SetVisible(false);
         this->listMarqueeMaskRect = Rectangle::New(0, 0, 0, 0, this->menu->GetOnFocusColor());
@@ -1098,6 +1122,49 @@ namespace inst::ui {
         this->saveVersionSelectorHintText = TextBlock::New(114, 614, "A Download    B Back", 18);
         this->saveVersionSelectorHintText->SetColor(COLOR("#FFFFFFFF"));
         this->saveVersionSelectorHintText->SetVisible(false);
+        this->sectionHighlight = Rectangle::New(430, 78, 420, 32, inst::theme::Color("highlight", COLOR("#FFFFFF22")), 12);
+        this->previousSectionText = TextBlock::New(24, 85, "", 18);
+        this->nextSectionText = TextBlock::New(900, 85, "", 18);
+        this->browseSummaryText = TextBlock::New(900, 649, "", 16);
+        this->browseDetailPanel = Rectangle::New(888, 150, 368, 486, inst::theme::Color("panel", COLOR("#17171CEE")), 12);
+        this->focusedTitleText = TextBlock::New(912, 491, "", 22);
+        this->focusedMetadataText = TextBlock::New(912, 532, "", 17);
+        for (auto text : {this->previousSectionText, this->nextSectionText, this->browseSummaryText, this->focusedMetadataText})
+            text->SetColor(inst::theme::Color("muted_text", COLOR("#A8A8B8FF")));
+        this->focusedTitleText->SetColor(COLOR("#FFFFFFFF"));
+        for (int i = 0; i < kGridItemsPerPage; ++i) {
+            const int x = kGridStartX + (i % kGridCols) * (kGridTileWidth + kGridGap);
+            const int y = kGridStartY + (i / kGridCols) * (kGridTileHeight + kGridGap);
+            auto card = Rectangle::New(x - 6, y - 6, kGridTileWidth + 12, kGridTileHeight + 30,
+                inst::theme::Color("panel", COLOR("#17171CEE")), 10);
+            card->SetVisible(false);
+            this->gridCardBacks.push_back(card);
+            auto caption = TextBlock::New(x, y + kGridTileHeight + 4, "", 15);
+            caption->SetColor(COLOR("#FFFFFFFF"));
+            caption->SetVisible(false);
+            this->gridCaptions.push_back(caption);
+        }
+        for (int i = 0; i < kBrowseVisibleRows; ++i) {
+            const int y = kBrowseListY + i * kBrowseRowHeight;
+            auto cover = Image::New(49, y + 5, inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
+            cover->SetWidth(58); cover->SetHeight(58); cover->SetVisible(false);
+            this->listRowCovers.push_back(cover);
+            this->listRowCoverKeys.push_back("");
+            auto detail = TextBlock::New(132, y + 50, "", 14);
+            detail->SetColor(inst::theme::Color("muted_text", COLOR("#A8A8B8FF")));
+            this->listRowMetadata.push_back(detail);
+            auto size = TextBlock::New(760, y + 20, "", 17);
+            size->SetColor(COLOR("#FFFFFFFF"));
+            this->listRowSizes.push_back(size);
+            auto selected = TextBlock::New(754, y + 46, "", 14);
+            selected->SetColor(inst::theme::Color("accent", COLOR("#FF7777FF")));
+            this->listRowSelections.push_back(selected);
+            for (auto text : {detail, size, selected}) text->SetVisible(false);
+        }
+        for (auto text : {this->previousSectionText, this->nextSectionText, this->browseSummaryText,
+                this->focusedTitleText, this->focusedMetadataText}) text->SetVisible(false);
+        this->sectionHighlight->SetVisible(false);
+        this->browseDetailPanel->SetVisible(false);
         this->Add(this->topRect);
         this->Add(this->infoRect);
         this->Add(this->botRect);
@@ -1121,6 +1188,8 @@ namespace inst::ui {
         this->Add(this->timeText);
         this->Add(this->ipText);
         this->Add(this->butText);
+        this->Add(this->secondaryHintText);
+        this->Add(this->sectionHighlight);
         this->Add(this->pageInfoText);
         this->Add(this->loadingStagesBack);
         this->Add(this->loadingStagesText);
@@ -1129,20 +1198,39 @@ namespace inst::ui {
         this->Add(this->loadingBarFill);
         this->Add(this->loadingDetailText);
         this->Add(this->searchInfoText);
+        this->Add(this->previousSectionText);
+        this->Add(this->nextSectionText);
+        this->Add(this->browseSummaryText);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
         this->Add(this->menu);
 #pragma GCC diagnostic pop
         this->Add(this->infoImage);
+        this->Add(this->browseDetailPanel);
         this->Add(this->previewImage);
+        this->Add(this->focusedTitleText);
+        this->Add(this->focusedMetadataText);
+        for (auto& cover : this->listRowCovers) this->Add(cover);
+        for (auto& text : this->listRowMetadata) this->Add(text);
+        for (auto& text : this->listRowSizes) this->Add(text);
+        for (auto& text : this->listRowSelections) this->Add(text);
+        for (auto& card : this->gridCardBacks) this->Add(card);
         for (auto& highlight : this->remoteGridSelectHighlights)
             this->Add(highlight);
         // Keep focus behind cover art and selection marks for opaque theme colors.
         this->Add(this->gridHighlight);
         for (auto& img : this->gridImages)
             this->Add(img);
+        for (auto& badge : this->remoteGridSelectBadgeBacks) this->Add(badge);
         for (auto& icon : this->remoteGridSelectIcons)
             this->Add(icon);
+        for (auto& text : this->gridCaptions) this->Add(text);
+        this->gridCaptionMarquee = OverflowText::New(15, inst::theme::Color("accent", COLOR("#FF7777FF")));
+        auto captionBackground = inst::theme::Color("panel", COLOR("#17171CEE"));
+        captionBackground.A = 255;
+        this->gridCaptionMarquee->SetBackgroundColor(captionBackground);
+        this->gridCaptionMarquee->Attach(this);
+        this->gridCaptionMarquee->SetVisible(false);
         this->Add(this->gridTitleText);
         this->Add(this->imageLoadingText);
         this->Add(this->listMarqueeMaskRect);
@@ -1164,6 +1252,7 @@ namespace inst::ui {
         this->Add(this->saveVersionSelectorMenu);
         this->Add(this->saveVersionSelectorDetailText);
         this->Add(this->saveVersionSelectorHintText);
+        this->AddThread([this] { this->updateBrowseDecorations(); });
         this->iconDownloadThread = std::thread([this]() {
             this->iconDownloadThreadMain();
         });
@@ -1238,7 +1327,7 @@ namespace inst::ui {
 
         this->imageLoadingText->SetText(
             "Fetching images " + std::to_string(completed) + "/" + std::to_string(total));
-        this->imageLoadingText->SetX(10);
+        this->imageLoadingText->SetX(990);
 
         if (completed < total) {
             this->imageLoadingText->SetVisible(true);
@@ -1449,19 +1538,19 @@ namespace inst::ui {
             return;
         }
         const auto& section = this->remoteSections[this->selectedSectionIndex];
-        this->pageInfoText->SetText(queueAddMode ? "Add to queue  •  " + section.title : section.title);
+        this->pageInfoText->SetText(ClipBrowseText(queueAddMode ? "Add to queue  •  " + section.title : section.title, 26, 396));
         this->pageInfoText->SetY(81);
         CenterTextX(this->pageInfoText);
-        std::string rightInfo;
+        std::string rightInfo = std::to_string(section.items.size()) + " titles";
         if (!this->searchQuery.empty()) {
             std::string query = inst::util::shortenString(this->searchQuery, 28, true);
-            rightInfo = "Search: " + query;
+            rightInfo += "   •   Search: " + query;
         }
         if (this->isAllSection()) {
             if (!rightInfo.empty())
                 rightInfo += " | ";
             rightInfo += "Sort: " + this->getAllSortModeLabel();
-        } else if (this->browseSortMode != BrowseSortMode::Default) {
+        } else {
             if (!rightInfo.empty())
                 rightInfo += " | ";
             rightInfo += "Sort: ";
@@ -1470,13 +1559,181 @@ namespace inst::ui {
 
         if (!rightInfo.empty()) {
             this->searchInfoText->SetText(rightInfo);
-            int x = 1280 - this->searchInfoText->GetTextWidth() - 12;
-            if (x < 0)
-                x = 0;
-            this->searchInfoText->SetX(x);
+            this->searchInfoText->SetX(24);
             this->searchInfoText->SetVisible(true);
         } else {
             this->searchInfoText->SetVisible(false);
+        }
+    }
+
+    void remoteInstPage::updateBrowseDecorations() {
+        const bool blocked = this->loadingProgressText->IsVisible() || this->saveVersionSelectorVisible
+            || this->descriptionOverlayVisible;
+        // Do not read browser data while the refresh worker owns it.
+        if (blocked || this->remoteSections.empty()) {
+            this->sectionHighlight->SetVisible(false);
+            this->previousSectionText->SetVisible(false);
+            this->nextSectionText->SetVisible(false);
+            this->browseSummaryText->SetVisible(false);
+            this->browseDetailPanel->SetVisible(false);
+            this->focusedTitleText->SetVisible(false);
+            this->focusedMetadataText->SetVisible(false);
+            for (auto& badge : this->remoteGridSelectBadgeBacks) badge->SetVisible(false);
+            this->gridCaptionMarquee->SetVisible(false);
+            this->gridCaptionMarqueeKey.clear();
+            for (auto& card : this->gridCardBacks) card->SetVisible(false);
+            for (auto& text : this->gridCaptions) text->SetVisible(false);
+            for (auto& text : this->listRowMetadata) text->SetVisible(false);
+            for (auto& text : this->listRowSizes) text->SetVisible(false);
+            for (auto& text : this->listRowSelections) text->SetVisible(false);
+            for (auto& image : this->listRowCovers) image->SetVisible(false);
+            if (blocked) this->secondaryHintText->SetVisible(false);
+            this->browseDecorationKey.clear();
+            return;
+        }
+        this->secondaryHintText->SetVisible(!this->suppressBottomHints && !this->secondaryHintText->GetText().empty());
+        if (!this->remoteGridMode) this->listVisibleTopIndex = this->menu->GetVisibleTopIndex();
+        const bool fastScroll = this->isFastListScrolling();
+        const int selected = this->remoteGridMode ? this->remoteGridIndex : this->menu->GetSelectedIndex();
+        std::size_t completed = 0;
+        { std::lock_guard<std::mutex> lock(this->iconDownloadMutex); completed = this->iconDownloadCompleted; }
+        const std::string key = std::to_string(this->selectedSectionIndex) + ":" + std::to_string(selected)
+            + ":" + std::to_string(this->remoteGridMode) + ":" + std::to_string(this->visibleItems.size())
+            + ":" + std::to_string(this->selectedItems.size()) + ":" + std::to_string(this->listVisibleTopIndex)
+            + ":" + std::to_string(completed) + ":" + std::to_string(fastScroll) + ":" + this->searchQuery;
+        if (key == this->browseDecorationKey) {
+            this->gridCaptionMarquee->Update();
+            return;
+        }
+        this->browseDecorationKey = key;
+        const auto text = [](TextBlock::Ref target, const std::string& value) {
+            if (target->GetText() != value) target->SetText(value);
+        };
+        const auto neighbor = [&](int step) {
+            int index = this->selectedSectionIndex;
+            for (std::size_t i = 0; i < this->remoteSections.size(); ++i) {
+                index = (index + step + static_cast<int>(this->remoteSections.size())) % this->remoteSections.size();
+                if (!this->queueAddMode || this->isQueueSection(index)) return index;
+            }
+            return this->selectedSectionIndex;
+        };
+        const int previous = neighbor(-1), next = neighbor(1);
+        text(this->previousSectionText, "  " + ClipBrowseText(this->remoteSections[previous].title, 18, 320));
+        text(this->nextSectionText, ClipBrowseText(this->remoteSections[next].title, 18, 320) + "  ");
+        this->nextSectionText->SetX(1256 - this->nextSectionText->GetTextWidth());
+        this->sectionHighlight->SetVisible(true);
+        this->previousSectionText->SetVisible(this->remoteSections.size() > 1);
+        this->nextSectionText->SetVisible(this->remoteSections.size() > 1);
+        std::string context = std::to_string(this->visibleItems.size()) + " titles";
+        if (!this->searchQuery.empty()) context += "   •   Search: " + this->searchQuery;
+        context += "   •   Sort: " + (this->isAllSection() ? this->getAllSortModeLabel() : std::string(this->getBrowseSortLabel()));
+        text(this->searchInfoText, ClipBrowseText(context, 16, 920));
+        this->searchInfoText->SetVisible(true);
+        std::string summary = this->visibleItems.empty() ? "No titles"
+            : std::to_string(std::max(0, selected) + 1) + " of " + std::to_string(this->visibleItems.size());
+        if (this->remoteGridMode && !this->visibleItems.empty()) {
+            summary = "Page " + std::to_string(selected / kGridItemsPerPage + 1) + "/"
+                + std::to_string((this->visibleItems.size() + kGridItemsPerPage - 1) / kGridItemsPerPage);
+        }
+        if (!this->selectedItems.empty()) {
+            std::uint64_t bytes = 0;
+            for (const auto& item : this->selectedItems) bytes += item.size;
+            summary += "   •   " + std::to_string(this->selectedItems.size()) + " selected";
+            const auto size = FormatSizeText(bytes);
+            if (!size.empty()) summary += " · " + size;
+        }
+        text(this->browseSummaryText, ClipBrowseText(summary, 16, 450));
+        this->browseSummaryText->SetX(1256 - this->browseSummaryText->GetTextWidth());
+        this->browseSummaryText->SetVisible(true);
+        const auto status = [&](const remoteInstStuff::RemoteItem& item) -> std::string {
+            if (item.isCheat) return "Cheat";
+            if (!item.saveId.empty() || this->isSaveSyncSection()) return "Save backup";
+            std::string type = IsDlcItem(item) ? "DLC" : (IsUpdateItem(item) ? "Update" : "Game");
+            std::uint64_t baseId = 0;
+            const bool installedBase = IsBaseItem(item) && DeriveBaseTitleId(item, baseId)
+                && this->installedSnapshot.baseInstalled.count(baseId) > 0
+                && this->installedSnapshot.baseInstalled.at(baseId);
+            if (this->isInstalledSection() || installedBase) type += "  •  Installed";
+            else if (this->queueAddMode && !instPage::canEnqueueTitle(item.url)) type += "  •  Queued";
+            return type;
+        };
+        const bool marqueeVisible = this->remoteGridMode && selected >= 0
+            && selected < static_cast<int>(this->visibleItems.size());
+        if (marqueeVisible) {
+            const auto& item = this->visibleItems[selected];
+            const auto marqueeKey = std::to_string(selected) + ":" + BuildItemIdentityKey(item) + ":" + item.name;
+            if (marqueeKey != this->gridCaptionMarqueeKey) {
+                this->gridCaptionMarqueeKey = marqueeKey;
+                const int slot = selected % kGridItemsPerPage;
+                this->gridCaptionMarquee->SetBounds(
+                    kGridStartX + (slot % kGridCols) * (kGridTileWidth + kGridGap),
+                    kGridStartY + (slot / kGridCols) * (kGridTileHeight + kGridGap) + kGridTileHeight + 4,
+                    kGridTileWidth, 20);
+                this->gridCaptionMarquee->SetText(item.name);
+                this->gridCaptionMarquee->SetVisible(true);
+                this->gridCaptionMarquee->SetSelected(true, true);
+            }
+            this->gridCaptionMarquee->Update();
+        } else {
+            this->gridCaptionMarquee->SetVisible(false);
+            this->gridCaptionMarqueeKey.clear();
+            for (auto& badge : this->remoteGridSelectBadgeBacks) badge->SetVisible(false);
+        }
+        for (int slot = 0; slot < kGridItemsPerPage; ++slot) {
+            const int index = (selected / kGridItemsPerPage) * kGridItemsPerPage + slot;
+            const bool show = this->remoteGridMode && index >= 0 && index < static_cast<int>(this->visibleItems.size());
+            this->gridCardBacks[slot]->SetVisible(show);
+            this->gridCaptions[slot]->SetVisible(show && index != selected);
+            if (show) {
+                text(this->gridCaptions[slot], ClipBrowseText(OverflowText::NormalizeSingleLineText(this->visibleItems[index].name), 15, kGridTileWidth));
+                this->gridCaptions[slot]->SetColor(index == selected
+                    ? inst::theme::Color("accent", COLOR("#FF7777FF")) : COLOR("#FFFFFFFF"));
+            }
+        }
+        const bool list = !this->remoteGridMode && !this->visibleItems.empty();
+        this->browseDetailPanel->SetVisible(list);
+        this->focusedTitleText->SetVisible(list);
+        this->focusedMetadataText->SetVisible(list);
+        if (list && selected >= 0 && selected < static_cast<int>(this->visibleItems.size())) {
+            const auto& item = this->visibleItems[selected];
+            text(this->focusedTitleText, ClipBrowseText(OverflowText::NormalizeSingleLineText(item.name), 22, 320));
+            std::string detail = status(item);
+            const auto size = FormatSizeText(item.size);
+            if (!size.empty()) detail += "\nSize: " + size;
+            if (item.hasAppVersion) detail += "\nVersion: " + std::to_string(item.appVersion);
+            if (item.hasReleaseDate) detail += "\nReleased: " + FormatReleaseDate(item.releaseDate);
+            text(this->focusedMetadataText, detail);
+        }
+        for (int row = 0; row < kBrowseVisibleRows; ++row) {
+            const int index = this->listVisibleTopIndex + row;
+            const bool show = list && index >= 0 && index < static_cast<int>(this->visibleItems.size());
+            this->listRowMetadata[row]->SetVisible(show);
+            this->listRowSizes[row]->SetVisible(show);
+            this->listRowSelections[row]->SetVisible(show);
+            this->listRowCovers[row]->SetVisible(show && !fastScroll);
+            if (!show) continue;
+            const auto& item = this->visibleItems[index];
+            text(this->listRowMetadata[row], status(item));
+            text(this->listRowSizes[row], FormatSizeText(item.size));
+            this->listRowSizes[row]->SetX(842 - this->listRowSizes[row]->GetTextWidth());
+            const bool selectedForInstall = std::any_of(this->selectedItems.begin(), this->selectedItems.end(), [&](const auto& entry) {
+                return !item.url.empty() && entry.url == item.url;
+            });
+            text(this->listRowSelections[row], selectedForInstall ? "✓ Selected" : "");
+            if (fastScroll) continue;
+            const auto iconPath = GetRemoteGridIconCachePath(item);
+            const bool cached = !iconPath.empty() && std::filesystem::exists(iconPath);
+            const auto coverKey = BuildItemIdentityKey(item) + (cached ? iconPath : ":placeholder");
+            if (this->listRowCoverKeys[row] != coverKey) {
+                this->listRowCoverKeys[row] = coverKey;
+                std::vector<std::uint8_t> offlineIcon;
+                if (cached) this->listRowCovers[row]->SetImage(iconPath);
+                else if (TryLoadOfflineIconForItem(item, offlineIcon) && !offlineIcon.empty())
+                    this->listRowCovers[row]->SetJpegImage(offlineIcon.data(), static_cast<s32>(offlineIcon.size()));
+                else this->listRowCovers[row]->SetImage(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
+                this->listRowCovers[row]->SetWidth(58); this->listRowCovers[row]->SetHeight(58);
+                if (!cached && !iconPath.empty()) this->queueIconDownload(item, iconPath);
+            }
         }
     }
 
@@ -1718,14 +1975,8 @@ namespace inst::ui {
             return;
 
         const int menuX = this->menu->GetProcessedX();
-        const int menuW = this->menu->GetWidth();
-        textX = menuX + 25;
-        if (!this->isInstalledSection() && !this->isSaveSyncSection())
-            textX = menuX + 76;
-        int maxRowRight = menuX + menuW - 28;
-        const int previewSafeRight = menuX + 860;
-        if (maxRowRight > previewSafeRight)
-            maxRowRight = previewSafeRight;
+        textX = menuX + this->menu->GetItemSize() + 40;
+        int maxRowRight = textX + 550;
         if (maxRowRight < textX)
             maxRowRight = textX;
         textWidth = maxRowRight - textX;
@@ -1734,20 +1985,11 @@ namespace inst::ui {
     static std::string BuildSingleLineGridTitle(const std::string& title)
     {
         const std::string normalized = OverflowText::NormalizeSingleLineText(title);
-        return ClipSingleLineByMenuRender(normalized, 18, 1260, 26, nullptr);
+        return ClipBrowseText(normalized, 18, 680);
     }
 
-    std::string remoteInstPage::buildListMenuLabel(const remoteInstStuff::RemoteItem& item)
-    {
-        const std::string normalizedName = OverflowText::NormalizeSingleLineText(item.name);
-        if (item.isCheat) {
-            std::string suffix = inst::cheats::IsInstalled(item.cheatTitleId, item.cheatBuildId) ? " [Installed]" : " [Remote]";
-            return inst::util::shortenString(normalizedName, ComputeListNameLimit(suffix), true) + suffix;
-        }
-        std::string sizeText = FormatSizeText(item.size);
-        std::string suffix = sizeText.empty() ? "" : (" [" + sizeText + "]");
-        const int nameLimit = ComputeListNameLimit(suffix);
-        return inst::util::shortenString(normalizedName, nameLimit, true) + suffix;
+    std::string remoteInstPage::buildListMenuLabel(const remoteInstStuff::RemoteItem& item) {
+        return ClipBrowseText(OverflowText::NormalizeSingleLineText(item.name), 22, 550);
     }
 
     void remoteInstPage::updateListMarquee(bool force)
@@ -1764,16 +2006,14 @@ namespace inst::ui {
             this->listMarqueeFullLabel.clear();
         };
 
-        if (this->remoteGridMode || !this->menu->IsVisible()) {
+        if (this->remoteGridMode || !this->menu->IsVisible() || this->isFastListScrolling()) {
             hideMarquee();
-            this->listPrevSelectedIndex = -1;
             this->listMarqueeIndex = -1;
             return;
         }
         auto& items = this->menu->GetItems();
         if (items.empty() || this->visibleItems.empty()) {
             hideMarquee();
-            this->listPrevSelectedIndex = -1;
             this->listMarqueeIndex = -1;
             return;
         }
@@ -1781,7 +2021,6 @@ namespace inst::ui {
         int selectedIndex = this->menu->GetSelectedIndex();
         if (selectedIndex < 0 || selectedIndex >= static_cast<int>(this->visibleItems.size())) {
             hideMarquee();
-            this->listPrevSelectedIndex = -1;
             this->listMarqueeIndex = -1;
             return;
         }
@@ -1796,39 +2035,15 @@ namespace inst::ui {
         const u64 endPauseTicks = (freq * kListMarqueeEndPauseMs) / 1000;
         const u64 fadeDurationTicks = (freq * kListMarqueeFadeDurationMs) / 1000;
 
-        const int itemCount = static_cast<int>(items.size());
-        int visibleCount = this->menu->GetNumberOfItemsToShow();
-        if (visibleCount < 1)
-            visibleCount = 1;
-        int maxTopIndex = itemCount - visibleCount;
-        if (maxTopIndex < 0)
-            maxTopIndex = 0;
+        const int visibleCount = std::max(1, this->menu->GetNumberOfItemsToShow());
 
-        if (force || this->listPrevSelectedIndex < 0) {
-            if (selectedIndex >= itemCount - visibleCount)
-                this->listVisibleTopIndex = maxTopIndex;
-            else if (selectedIndex < visibleCount)
-                this->listVisibleTopIndex = 0;
-            else
-                this->listVisibleTopIndex = selectedIndex;
-        } else if (selectedIndex > this->listPrevSelectedIndex) {
-            if (selectedIndex >= (this->listVisibleTopIndex + visibleCount))
-                this->listVisibleTopIndex = selectedIndex - visibleCount + 1;
-        } else if (selectedIndex < this->listPrevSelectedIndex) {
-            if (selectedIndex < this->listVisibleTopIndex)
-                this->listVisibleTopIndex = selectedIndex;
-        }
-
-        if (this->listVisibleTopIndex < 0)
-            this->listVisibleTopIndex = 0;
-        if (this->listVisibleTopIndex > maxTopIndex)
-            this->listVisibleTopIndex = maxTopIndex;
-        this->listPrevSelectedIndex = selectedIndex;
+        // Stopping a marquee/hold does not reposition the menu. Read its
+        // tracked viewport rather than guessing a top row from selection.
+        this->listVisibleTopIndex = this->menu->GetVisibleTopIndex();
 
         const auto& item = this->visibleItems[static_cast<std::size_t>(selectedIndex)];
         const std::string normalizedName = OverflowText::NormalizeSingleLineText(item.name);
-        std::string sizeText = FormatSizeText(item.size);
-        std::string suffix = sizeText.empty() ? "" : (" [" + sizeText + "]");
+        std::string suffix;
 
         int row = selectedIndex - this->listVisibleTopIndex;
         if (row < 0 || row >= visibleCount) {
@@ -1850,7 +2065,7 @@ namespace inst::ui {
         constexpr int kRemoteListMenuFontSize = 22;
         constexpr int kRenderNoWrapWidth = 1279;
         std::string label = ClipSingleLinePrefixSuffixByMenuRender(
-            normalizedName, suffix, kRemoteListMenuFontSize, kRenderNoWrapWidth, itemHeight - 2);
+            normalizedName, suffix, kRemoteListMenuFontSize, kRenderNoWrapWidth, 30);
         this->listMarqueeOverlayText->SetText(label);
         this->listMarqueeMaxOffset = this->listMarqueeOverlayText->GetTextWidth() - maskWidth;
         if (this->listMarqueeMaxOffset < 0)
@@ -1985,21 +2200,21 @@ namespace inst::ui {
         }
         this->listMarqueeMaskRect->SetColor(marqueeBaseColor);
         this->listMarqueeMaskRect->SetX(textX);
-        this->listMarqueeMaskRect->SetY(rowY);
+        this->listMarqueeMaskRect->SetY(rowY + 17);
         this->listMarqueeMaskRect->SetWidth(maskWidth);
-        this->listMarqueeMaskRect->SetHeight(itemHeight);
+        this->listMarqueeMaskRect->SetHeight(32);
         this->listMarqueeMaskRect->SetVisible(true);
         this->listMarqueeTintRect->SetColor(marqueeHighlightColor);
         this->listMarqueeTintRect->SetX(textX);
-        this->listMarqueeTintRect->SetY(rowY);
+        this->listMarqueeTintRect->SetY(rowY + 17);
         this->listMarqueeTintRect->SetWidth(maskWidth);
-        this->listMarqueeTintRect->SetHeight(itemHeight);
+        this->listMarqueeTintRect->SetHeight(32);
         this->listMarqueeTintRect->SetVisible(true);
         this->listMarqueeClipEnabled = true;
         this->listMarqueeClipX = textX;
-        this->listMarqueeClipY = rowY;
+        this->listMarqueeClipY = rowY + 17;
         this->listMarqueeClipW = maskWidth;
-        this->listMarqueeClipH = itemHeight;
+        this->listMarqueeClipH = 32;
         this->listMarqueeOverlayText->SetX(textX - this->listMarqueeOffset);
         this->listMarqueeOverlayText->SetY(textY);
         this->listMarqueeOverlayText->SetVisible(true);
@@ -2009,9 +2224,9 @@ namespace inst::ui {
             fadeColor.A = static_cast<u8>(this->listMarqueeFadeAlpha);
             this->listMarqueeFadeRect->SetColor(fadeColor);
             this->listMarqueeFadeRect->SetX(textX);
-            this->listMarqueeFadeRect->SetY(rowY);
+            this->listMarqueeFadeRect->SetY(rowY + 17);
             this->listMarqueeFadeRect->SetWidth(maskWidth);
-            this->listMarqueeFadeRect->SetHeight(itemHeight);
+            this->listMarqueeFadeRect->SetHeight(32);
             this->listMarqueeFadeRect->SetVisible(true);
         } else {
             this->listMarqueeFadeRect->SetVisible(false);
@@ -3022,7 +3237,18 @@ namespace inst::ui {
 
     }
 
+    bool remoteInstPage::isFastListScrolling() const {
+        return !this->remoteGridMode && this->holdDirection != 0 && this->holdStartTick != 0
+            && armGetSystemTick() - this->holdStartTick >= armGetSystemTickFreq() * 400 / 1000;
+    }
+
     void remoteInstPage::updatePreview() {
+        if (this->isFastListScrolling()) {
+            this->previewImage->SetVisible(false);
+            this->imageLoadingText->SetVisible(false);
+            this->previewKey.clear();
+            return;
+        }
         if (this->remoteGridMode) {
             this->previewImage->SetVisible(false);
             this->previewKey.clear();
@@ -3061,10 +3287,10 @@ namespace inst::ui {
             return;
         }
         auto applyPreviewLayout = [&]() {
-            this->previewImage->SetX(900);
-            this->previewImage->SetY(230);
-            this->previewImage->SetWidth(320);
-            this->previewImage->SetHeight(320);
+            this->previewImage->SetX(920);
+            this->previewImage->SetY(170);
+            this->previewImage->SetWidth(304);
+            this->previewImage->SetHeight(304);
         };
 
         if (item.url.empty()) {
@@ -3192,6 +3418,7 @@ namespace inst::ui {
     }
 
     void remoteInstPage::drawMenuItems(bool clearItems) {
+        this->browseDecorationKey.clear();
         std::string previousSelectionKey;
         int previousSelectionIndex = 0;
         if (!this->visibleItems.empty()) {
@@ -3304,37 +3531,13 @@ namespace inst::ui {
             icon->SetVisible(false);
         this->menu->SetVisible(!this->refreshingLibrary);
 
-        const bool installedSection = this->isInstalledSection();
-        const bool saveSyncSection = this->isSaveSyncSection();
-        const bool cheatsSection = this->isCheatsSection();
-        std::unordered_set<std::string> selectedUrls;
-        if (!installedSection && !saveSyncSection && !cheatsSection && !this->selectedItems.empty()) {
-            selectedUrls.reserve(this->selectedItems.size());
-            for (const auto& selected : this->selectedItems) {
-                if (!selected.url.empty())
-                    selectedUrls.insert(selected.url);
-            }
-        }
-        const bool useFastListLabels = this->visibleItems.size() > 400;
         for (std::size_t i = 0; i < this->visibleItems.size(); i++) {
             this->renderLibraryRefresh();
             const auto& item = this->visibleItems[i];
-            std::string itm;
-            if (useFastListLabels) {
-                itm = OverflowText::NormalizeSingleLineText(item.name);
-                std::string sizeText = FormatSizeText(item.size);
-                if (!sizeText.empty())
-                    itm += " [" + sizeText + "]";
-            } else {
-                itm = this->buildListMenuLabel(item);
-            }
+            const std::string itm = this->buildListMenuLabel(item);
             auto entry = pu::ui::elm::MenuItem::New(itm);
             entry->SetColor(COLOR("#FFFFFFFF"));
-            if (!installedSection && !saveSyncSection && !cheatsSection) {
-                entry->SetIcon(inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
-                if (!item.url.empty() && selectedUrls.find(item.url) != selectedUrls.end())
-                    entry->SetIcon(inst::theme::Asset("romfs:/images/icons/check-box-outline.png"));
-            }
+            entry->SetIcon(inst::theme::Asset("romfs:/images/icons/title-placeholder.png"));
             this->menu->AddItem(entry);
         }
 
@@ -3369,8 +3572,7 @@ namespace inst::ui {
         this->remoteGridIndex = restoredIndex;
         this->gridSelectedIndex = restoredIndex;
         this->listMarqueeIndex = -1;
-        this->listVisibleTopIndex = 0;
-        this->listPrevSelectedIndex = -1;
+        this->listVisibleTopIndex = this->menu->GetVisibleTopIndex();
         this->listMarqueeOffset = 0;
         this->listMarqueeMaxOffset = 0;
         this->listMarqueeLastTick = 0;
@@ -3385,29 +3587,12 @@ namespace inst::ui {
     }
 
     void remoteInstPage::refreshListSelectionIcons() {
-        if (this->menu->GetItems().empty())
-            return;
-        if (this->isInstalledSection() || this->isSaveSyncSection() || this->isCheatsSection())
-            return;
-
-        std::unordered_set<std::string> selectedUrls;
-        selectedUrls.reserve(this->selectedItems.size());
-        for (const auto& selected : this->selectedItems) {
-            if (!selected.url.empty())
-                selectedUrls.insert(selected.url);
-        }
-
-        auto& menuItems = this->menu->GetItems();
-        const std::size_t count = std::min(menuItems.size(), this->visibleItems.size());
-        for (std::size_t i = 0; i < count; i++) {
-            const auto& item = this->visibleItems[i];
-            const bool isSelected = !item.url.empty() && selectedUrls.find(item.url) != selectedUrls.end();
-            menuItems[i]->SetIcon(isSelected ? inst::theme::Asset("romfs:/images/icons/check-box-outline.png")
-                                             : inst::theme::Asset("romfs:/images/icons/checkbox-blank-outline.png"));
-        }
+        this->browseDecorationKey.clear();
+        this->updateBrowseDecorations();
     }
 
     void remoteInstPage::updateInstalledGrid() {
+        for (auto& badge : this->remoteGridSelectBadgeBacks) badge->SetVisible(false);
         this->listMarqueeMaskRect->SetVisible(false);
         this->listMarqueeTintRect->SetVisible(false);
         this->listMarqueeOverlayText->SetVisible(false);
@@ -3636,6 +3821,7 @@ namespace inst::ui {
             int y = kGridStartY + (row * (kGridTileHeight + kGridGap));
 
             if (itemIndex >= maxIndex) {
+                this->remoteGridSelectBadgeBacks[i]->SetVisible(false);
                 this->remoteGridSelectHighlights[i]->SetVisible(false);
                 this->remoteGridSelectIcons[i]->SetVisible(false);
                 continue;
@@ -3648,9 +3834,14 @@ namespace inst::ui {
                     return entry.url == item.url;
                 });
             }
-            const int iconSize = 120;
-            this->remoteGridSelectIcons[i]->SetX(x + (kGridTileWidth - iconSize) / 2);
-            this->remoteGridSelectIcons[i]->SetY(y + (kGridTileHeight - iconSize) / 2);
+            const int iconSize = 56;
+            const int badgeX = x + kGridTileWidth - iconSize - 6;
+            const int badgeY = y + 6;
+            this->remoteGridSelectBadgeBacks[i]->SetX(badgeX);
+            this->remoteGridSelectBadgeBacks[i]->SetY(badgeY);
+            this->remoteGridSelectBadgeBacks[i]->SetVisible(isSelected);
+            this->remoteGridSelectIcons[i]->SetX(badgeX + (iconSize - this->remoteGridSelectIcons[i]->GetTextWidth()) / 2);
+            this->remoteGridSelectIcons[i]->SetY(badgeY + (iconSize - this->remoteGridSelectIcons[i]->GetTextHeight()) / 2);
             this->remoteGridSelectIcons[i]->SetVisible(isSelected);
             this->remoteGridSelectHighlights[i]->SetX(x - 4);
             this->remoteGridSelectHighlights[i]->SetY(y - 4);
@@ -3725,7 +3916,7 @@ namespace inst::ui {
             return;
         }
 
-        this->drawMenuItems(false);
+        this->refreshListSelectionIcons();
     }
 
     void remoteInstPage::updateRememberedSelection() {
@@ -4529,7 +4720,19 @@ namespace inst::ui {
         }
         int bottomTapX = 0;
         if (DetectBottomHintTap(Pos, this->bottomHintTouch, 668, 52, bottomTapX)) {
-            Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);
+            Down |= FindBottomHintButton(this->bottomHintTouch.startY >= 697
+                ? this->secondaryHintSegments : this->bottomHintSegments, bottomTapX);
+        }
+        int sectionTapX = 0;
+        if (!this->descriptionOverlayVisible && !this->saveVersionSelectorVisible
+            && DetectBottomHintTap(Pos, this->sectionHintTouch, 78, 34, sectionTapX)) {
+            if (sectionTapX < 410) Down |= HidNpadButton_L;
+            else if (sectionTapX > 870) Down |= HidNpadButton_R;
+        }
+        if (Down & (HidNpadButton_L | HidNpadButton_R | HidNpadButton_Minus | HidNpadButton_X | HidNpadButton_ZR)) {
+            this->holdDirection = 0;
+            this->holdStartTick = 0;
+            this->lastHoldTick = 0;
         }
         inst::util::playNavigationClickIfNeeded(Down);
         if (this->descriptionOverlayVisible) {
@@ -4582,7 +4785,7 @@ namespace inst::ui {
                 if (allSelected) selectedItems.clear();
                 else for (const auto& item : visibleItems)
                     if (instPage::canEnqueueTitle(item.url) && selectedUrls.insert(item.url).second) selectedItems.push_back(item);
-                drawMenuItems(false);
+                refreshListSelectionIcons();
                 Down &= ~HidNpadButton_Y;
             }
             // Keep the session's source, credentials and catalogue stable.
@@ -4600,6 +4803,7 @@ namespace inst::ui {
             mainApp->LoadLayout(mainApp->mainPage);
         }
         if (Down & HidNpadButton_Minus) {
+            const int focusedIndex = this->remoteGridMode ? this->remoteGridIndex : this->menu->GetSelectedIndex();
             this->remoteGridMode = !this->remoteGridMode;
             this->touchActive = false;
             this->touchMoved = false;
@@ -4609,7 +4813,7 @@ namespace inst::ui {
                 this->listMarqueeOverlayText->SetVisible(false);
                 this->listMarqueeClipEnabled = false;
                 this->listMarqueeFadeRect->SetVisible(false);
-                this->remoteGridIndex = this->menu->GetSelectedIndex();
+                this->remoteGridIndex = focusedIndex;
                 if (this->remoteGridIndex < 0)
                     this->remoteGridIndex = 0;
                 this->remoteGridPage = -1;
@@ -4643,10 +4847,18 @@ namespace inst::ui {
                     this->refreshListSelectionIcons();
                 else
                     this->drawMenuItems(false);
+                if (!this->menu->GetItems().empty()) {
+                    const int restored = std::clamp(focusedIndex, 0, static_cast<int>(this->menu->GetItems().size()) - 1);
+                    this->menu->SetSelectedIndex(restored);
+                    this->remoteGridIndex = restored;
+                    this->gridSelectedIndex = restored;
+                }
                 this->updatePreview();
                 this->updateListMarquee(true);
             }
             this->updateDescriptionPanel();
+            this->browseDecorationKey.clear();
+            this->updateBrowseDecorations();
             return;
         }
         if (Down & HidNpadButton_StickR) {
@@ -4838,7 +5050,7 @@ namespace inst::ui {
             }
             if (!Pos.IsEmpty()) {
                 const int gridW = kGridCols * kGridTileWidth + (kGridCols - 1) * kGridGap;
-                const int gridH = kGridRows * kGridTileHeight + (kGridRows - 1) * kGridGap;
+                const int gridH = kGridRows * kGridTileHeight + (kGridRows - 1) * kGridGap + 24;
                 const bool inGrid = (Pos.X >= kGridStartX) && (Pos.X <= (kGridStartX + gridW)) && (Pos.Y >= kGridStartY) && (Pos.Y <= (kGridStartY + gridH));
                 if (inGrid) {
                     const int relX = Pos.X - kGridStartX;
@@ -4847,7 +5059,7 @@ namespace inst::ui {
                     const int row = relY / (kGridTileHeight + kGridGap);
                     const int tileX = relX - (col * (kGridTileWidth + kGridGap));
                     const int tileY = relY - (row * (kGridTileHeight + kGridGap));
-                    if (col >= 0 && col < kGridCols && row >= 0 && row < kGridRows && tileX <= kGridTileWidth && tileY <= kGridTileHeight) {
+                    if (col >= 0 && col < kGridCols && row >= 0 && row < kGridRows && tileX < kGridTileWidth && tileY < kGridTileHeight + 24) {
                         int page = 0;
                         if (this->remoteGridIndex > 0)
                             page = this->remoteGridIndex / kGridItemsPerPage;
@@ -4941,7 +5153,7 @@ namespace inst::ui {
                 if (this->selectedItems.size() == this->menu->GetItems().size()) {
                     this->selectedItems.clear();
                     this->updateRememberedSelection();
-                    this->drawMenuItems(false);
+                    this->refreshListSelectionIcons();
                 } else {
                     std::unordered_set<std::string> selectedUrls;
                     selectedUrls.reserve(this->selectedItems.size());
@@ -4957,7 +5169,7 @@ namespace inst::ui {
                         selectedUrls.insert(item.url);
                     }
                     this->updateRememberedSelection();
-                    this->drawMenuItems(false);
+                    this->refreshListSelectionIcons();
                 }
             }
         }
@@ -4989,29 +5201,25 @@ namespace inst::ui {
                     this->holdStartTick = now;
                     this->lastHoldTick = now;
                 }
-                if ((int)this->menu->GetItems().size() > this->menu->GetNumberOfItemsToShow()) {
-                    const u64 freq = armGetSystemTickFreq();
-                    const u64 delayTicks = (freq * 300) / 1000;
-                    const u64 repeatTicks = (freq * 70) / 1000;
-                    if (now - this->holdStartTick >= delayTicks && now - this->lastHoldTick >= repeatTicks) {
-                        int currentIndex = this->menu->GetSelectedIndex();
-                        int maxIndex = static_cast<int>(this->menu->GetItems().size()) - 1;
-                        bool moved = false;
-                        if (direction > 0) {
-                            if (currentIndex < maxIndex) {
-                                this->menu->OnInput(HidNpadButton_AnyDown, 0, 0, pu::ui::Touch::Empty);
-                                moved = true;
-                            }
-                        } else {
-                            if (currentIndex > 0) {
-                                this->menu->OnInput(HidNpadButton_AnyUp, 0, 0, pu::ui::Touch::Empty);
-                                moved = true;
-                            }
-                        }
-                        if (moved)
-                            inst::util::playNavigationClick();
-                        this->lastHoldTick = now;
+                const u64 freq = armGetSystemTickFreq();
+                const u64 heldMs = (now - this->holdStartTick) * 1000 / freq;
+                // Start with deliberate single-row repeats. Only a sustained
+                // hold accelerates, and release/direction changes reset it.
+                const u64 repeatMs = heldMs >= 3200 ? 16 : (heldMs >= 2200 ? 25 : (heldMs >= 1200 ? 45 : 90));
+                if (heldMs >= 400 && !(Down & holdMask)
+                    && now - this->lastHoldTick >= freq * repeatMs / 1000) {
+                    const int current = this->menu->GetSelectedIndex();
+                    const int count = static_cast<int>(this->menu->GetItems().size());
+                    const int target = std::clamp(current + direction, 0, count - 1);
+                    if (target != current) {
+                        // Use ordinary one-row movement so the viewport scrolls
+                        // naturally instead of snapping to a new top row.
+                        this->menu->OnInput(direction > 0 ? HidNpadButton_Down : HidNpadButton_Up,
+                            0, 0, pu::ui::Touch::Empty);
+                        this->listVisibleTopIndex = this->menu->GetVisibleTopIndex();
+                        if (heldMs < 1000) inst::util::playNavigationClick();
                     }
+                    this->lastHoldTick = now;
                 }
             }
         } else {
@@ -5055,7 +5263,7 @@ namespace inst::ui {
         if (this->remoteGridMode && this->isInstalledSection() && !this->visibleItems.empty()) {
             if (!Pos.IsEmpty()) {
                 const int gridW = kGridCols * kGridTileWidth + (kGridCols - 1) * kGridGap;
-                const int gridH = kGridRows * kGridTileHeight + (kGridRows - 1) * kGridGap;
+                const int gridH = kGridRows * kGridTileHeight + (kGridRows - 1) * kGridGap + 24;
                 const bool inGrid = (Pos.X >= kGridStartX) && (Pos.X <= (kGridStartX + gridW)) && (Pos.Y >= kGridStartY) && (Pos.Y <= (kGridStartY + gridH));
                 if (!this->touchActive) {
                     if (inGrid) {
@@ -5069,7 +5277,7 @@ namespace inst::ui {
                     const int row = relY / (kGridTileHeight + kGridGap);
                     const int tileX = relX - (col * (kGridTileWidth + kGridGap));
                     const int tileY = relY - (row * (kGridTileHeight + kGridGap));
-                    if (col >= 0 && col < kGridCols && row >= 0 && row < kGridRows && tileX <= kGridTileWidth && tileY <= kGridTileHeight) {
+                    if (col >= 0 && col < kGridCols && row >= 0 && row < kGridRows && tileX < kGridTileWidth && tileY < kGridTileHeight + 24) {
                         int page = 0;
                         if (this->gridSelectedIndex > 0)
                             page = this->gridSelectedIndex / kGridItemsPerPage;
@@ -5102,6 +5310,7 @@ namespace inst::ui {
         }
         this->updateDescriptionPanel();
         this->updateDebug();
+        this->updateBrowseDecorations();
     }
 
     void remoteInstPage::showInstalledDetails() {
@@ -5467,44 +5676,42 @@ namespace inst::ui {
     }
 
     void remoteInstPage::setButtonsText(const std::string& text) {
+        this->secondaryHintText->SetVisible(false);
+        this->secondaryHintSegments.clear();
         if (this->suppressBottomHints) {
             this->butText->SetText("");
             this->bottomHintSegments.clear();
             return;
         }
-        std::string fullText = text;
-        int hintFontSize = 18;
-        this->butText->SetFontSize(hintFontSize);
-        const std::string descHint = "     Show Desc";
-        auto segments = BuildBottomHintSegments(fullText + descHint, 10, 20);
-        if (!segments.empty()) {
-            const auto& last = segments.back();
-            if ((last.x + last.width) <= 1270)
-                fullText += descHint;
-        }
-        this->butText->SetText(fullText);
-        constexpr int kHintMaxWidth = 1260;
-        if (this->butText->GetTextWidth() > kHintMaxWidth) {
-            hintFontSize = 16;
-            this->butText->SetFontSize(hintFontSize);
-            this->butText->SetText(fullText);
-            if (this->butText->GetTextWidth() > kHintMaxWidth) {
-                hintFontSize = 14;
-                this->butText->SetFontSize(hintFontSize);
-                this->butText->SetText(fullText);
-                if (this->butText->GetTextWidth() > kHintMaxWidth) {
-                    hintFontSize = 12;
-                    this->butText->SetFontSize(hintFontSize);
-                    this->butText->SetText(fullText);
-                    if (this->butText->GetTextWidth() > kHintMaxWidth) {
-                        hintFontSize = 10;
-                        this->butText->SetFontSize(hintFontSize);
-                        this->butText->SetText(fullText);
-                    }
-                }
+        std::string full = text;
+        if (!this->saveVersionSelectorVisible && !this->descriptionOverlayVisible)
+            full += "     Details";
+        std::string first, second;
+        std::size_t start = 0;
+        bool secondLine = false;
+        this->butText->SetFontSize(18);
+        while (start < full.size()) {
+            const auto end = full.find("    ", start);
+            const auto token = full.substr(start, end == std::string::npos ? end : end - start);
+            const auto segments = BuildBottomHintSegments(token, 0, 18);
+            // Section controls now have their own persistent navigation strip.
+            const bool sectionToken = !segments.empty() && segments.front().primary == HidNpadButton_L;
+            if (!token.empty() && !sectionToken) {
+                const auto candidate = first.empty() ? token : first + "    " + token;
+                this->butText->SetText(candidate);
+                if (!secondLine && this->butText->GetTextWidth() > 1200) secondLine = true;
+                auto& line = secondLine ? second : first;
+                if (!line.empty()) line += "    ";
+                line += token;
             }
+            if (end == std::string::npos) break;
+            start = end + 4;
         }
-        this->bottomHintSegments = BuildBottomHintSegments(fullText, 10, hintFontSize);
+        this->butText->SetText(first);
+        this->secondaryHintText->SetText(second);
+        this->secondaryHintText->SetVisible(!second.empty());
+        this->bottomHintSegments = BuildBottomHintSegments(first, 24, 18);
+        this->secondaryHintSegments = BuildBottomHintSegments(second, 24, 16);
     }
 }
 
