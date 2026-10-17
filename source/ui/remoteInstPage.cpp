@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <exception>
+#include <stdexcept>
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
@@ -1480,7 +1482,7 @@ namespace inst::ui {
 
     void remoteInstPage::refreshLoadingStagesText()
     {
-        const std::string title = "inst.remote.loading"_lang;
+        const std::string title = this->refreshingLibrary ? "Refreshing library..." : "inst.remote.loading"_lang;
         if (this->loadingStagesText->GetText() != title) {
             this->loadingStagesText->SetText(title);
             CenterTextX(this->loadingStagesText);
@@ -3300,7 +3302,7 @@ namespace inst::ui {
         this->gridTitleText->SetVisible(false);
         for (auto& icon : this->remoteGridSelectIcons)
             icon->SetVisible(false);
-        this->menu->SetVisible(true);
+        this->menu->SetVisible(!this->refreshingLibrary);
 
         const bool installedSection = this->isInstalledSection();
         const bool saveSyncSection = this->isSaveSyncSection();
@@ -3315,6 +3317,7 @@ namespace inst::ui {
         }
         const bool useFastListLabels = this->visibleItems.size() > 400;
         for (std::size_t i = 0; i < this->visibleItems.size(); i++) {
+            this->renderLibraryRefresh();
             const auto& item = this->visibleItems[i];
             std::string itm;
             if (useFastListLabels) {
@@ -3729,6 +3732,7 @@ namespace inst::ui {
     }
 
     void remoteInstPage::startRemote(bool forceRefresh) {
+        this->refreshingLibrary = false;
         ResetRemoteDlcTrace();
         RemoteDlcTrace("startRemote begin forceRefresh=%d remoteHideInstalled=%d hideInstalledSection=%d", forceRefresh ? 1 : 0, inst::config::remoteHideInstalled ? 1 : 0, inst::config::remoteHideInstalledSection ? 1 : 0);
         this->suppressBottomHints = true;
@@ -4129,13 +4133,67 @@ namespace inst::ui {
         this->pendingMotdFetch = true;
     }
 
+    void remoteInstPage::renderLibraryRefresh(bool force) {
+        if (!this->refreshingLibrary || !mainApp->IsUiThread())
+            return;
+        const u64 now = armGetSystemTick();
+        if (!force && this->libraryRefreshLastRenderTick != 0
+            && now - this->libraryRefreshLastRenderTick < armGetSystemTickFreq() / 60)
+            return;
+        this->libraryRefreshLastRenderTick = now;
+        this->updateLoadingActivity();
+        mainApp->CallForRender();
+    }
+
+    void remoteInstPage::showLibraryRefresh() {
+        if (!mainApp->IsUiThread()) {
+            mainApp->RunOnUiThread([this] { this->showLibraryRefresh(); });
+            return;
+        }
+        if (this->refreshingLibrary)
+            return;
+        this->refreshingLibrary = true;
+        this->libraryRefreshLastRenderTick = 0;
+        this->suppressBottomHints = true;
+        this->setButtonsText("");
+        // The card is below the browser controls in draw order, so hide them
+        // before rendering the first refresh frame.
+        this->menu->SetVisible(false);
+        this->pageInfoText->SetVisible(false);
+        this->searchInfoText->SetVisible(false);
+        this->previewImage->SetVisible(false);
+        this->infoImage->SetVisible(false);
+        this->emptySectionText->SetVisible(false);
+        this->imageLoadingText->SetVisible(false);
+        this->gridHighlight->SetVisible(false);
+        this->gridTitleText->SetVisible(false);
+        this->debugText->SetVisible(false);
+        this->descriptionRect->SetVisible(false);
+        this->descriptionText->SetVisible(false);
+        this->closeDescriptionOverlay();
+        this->listMarqueeMaskRect->SetVisible(false);
+        this->listMarqueeTintRect->SetVisible(false);
+        this->listMarqueeOverlayText->SetVisible(false);
+        this->listMarqueeFadeRect->SetVisible(false);
+        this->listMarqueeClipEnabled = false;
+        for (auto& image : this->gridImages) image->SetVisible(false);
+        for (auto& highlight : this->remoteGridSelectHighlights) highlight->SetVisible(false);
+        for (auto& icon : this->remoteGridSelectIcons) icon->SetVisible(false);
+        this->setLoadingProgressStage("Installation complete. Updating your library...");
+        this->setLoadingProgress(-1, true);
+        mainApp->LoadLayout(mainApp->remoteinstPage);
+        this->renderLibraryRefresh(true);
+    }
+
     void remoteInstPage::refreshAfterInstall() {
         if (this->remoteSections.empty() || this->activeRemoteUrl.empty()) {
             this->startRemote(true);
             return;
         }
 
-        mainApp->LoadLayout(mainApp->remoteinstPage);
+        this->showLibraryRefresh();
+        this->setLoadingProgressStage("Checking installed games, updates and DLC...");
+        this->renderLibraryRefresh(true);
 
         const bool wasGridMode = this->remoteGridMode;
         const int previousSectionIndex = this->selectedSectionIndex;
@@ -4143,12 +4201,68 @@ namespace inst::ui {
         if (previousSectionIndex >= 0 && previousSectionIndex < static_cast<int>(this->remoteSections.size()))
             previousSectionId = this->remoteSections[static_cast<std::size_t>(previousSectionIndex)].id;
 
-        this->installedSnapshot = {};
-        this->ensureInstalledSectionPlaceholder();
-        (void)this->ensureInstalledSectionBuilt();
-        this->cacheAvailableUpdates();
-        this->filterOwnedSections();
-        this->applyAllSectionSort();
+        // The hidden browser model belongs exclusively to this worker until
+        // join. The UI pumps only the loading controls: onInput blocks browser
+        // access, and MainApplication defers close/theme replacement while busy.
+        std::atomic<bool> refreshDone{false};
+        std::atomic<int> refreshStage{0};
+        std::exception_ptr refreshFailure;
+        std::jthread refreshWorker;
+        try {
+            refreshWorker = std::jthread([&] {
+                try {
+                    this->installedSnapshot = {};
+                    if (!this->buildInstalledSnapshot())
+                        throw std::runtime_error("Unable to scan installed content");
+                    this->ensureInstalledSectionPlaceholder();
+                    (void)this->ensureInstalledSectionBuilt();
+                    refreshStage.store(1, std::memory_order_relaxed);
+                    this->cacheAvailableUpdates();
+                    this->filterOwnedSections();
+                    refreshStage.store(2, std::memory_order_relaxed);
+                    this->applyAllSectionSort();
+                } catch (...) {
+                    refreshFailure = std::current_exception();
+                }
+                refreshDone.store(true, std::memory_order_release);
+            });
+        } catch (...) {
+            refreshFailure = std::current_exception();
+            refreshDone.store(true, std::memory_order_release);
+        }
+
+        static const char* stages[] = {
+            "Checking installed games, updates and DLC...",
+            "Updating available updates and DLC...",
+            "Sorting your library..."
+        };
+        int displayedStage = 0;
+        const u64 frameTicks = armGetSystemTickFreq() / 60;
+        while (!refreshDone.load(std::memory_order_acquire)) {
+            const u64 frameStart = armGetSystemTick();
+            const int stage = refreshStage.load(std::memory_order_relaxed);
+            if (stage != displayedStage) {
+                displayedStage = stage;
+                this->setLoadingProgressStage(stages[stage]);
+            }
+            this->renderLibraryRefresh(true);
+            const u64 elapsed = armGetSystemTick() - frameStart;
+            if (elapsed < frameTicks)
+                svcSleepThread(static_cast<s64>((frameTicks - elapsed) * 1000000000ULL / armGetSystemTickFreq()));
+        }
+        if (refreshWorker.joinable())
+            refreshWorker.join();
+        if (refreshFailure) {
+            // Do not retry a failed scan synchronously while rebuilding widgets.
+            this->installedSnapshot = {};
+            this->setLoadingProgress(0, false);
+            this->setLoadingProgressStage("");
+            this->refreshingLibrary = false;
+            this->suppressBottomHints = false;
+            mainApp->LoadLayout(mainApp->mainPage);
+            mainApp->CreateShowDialog("Library refresh", "Could not refresh the library. Reopen Remote to try again.", {"common.ok"_lang}, true);
+            return;
+        }
 
         int nextSectionIndex = 0;
         if (!previousSectionId.empty()) {
@@ -4170,8 +4284,9 @@ namespace inst::ui {
         this->gridPage = -1;
         this->selectedItems.clear();
         this->previewKey.clear();
+        this->setLoadingProgressStage("Preparing your title list...");
+        this->renderLibraryRefresh(true);
         this->updateSectionText();
-        this->updateButtonsText();
         this->drawMenuItems(false);
         this->infoImage->SetVisible(false);
         if (!this->remoteGridMode) {
@@ -4180,6 +4295,12 @@ namespace inst::ui {
             this->updatePreview();
         }
         this->updateDescriptionPanel();
+        this->setLoadingProgress(0, false);
+        this->setLoadingProgressStage("");
+        this->refreshingLibrary = false;
+        this->suppressBottomHints = false;
+        this->pageInfoText->SetVisible(true);
+        this->updateButtonsText();
         mainApp->CallForRender();
     }
 
@@ -4401,8 +4522,11 @@ namespace inst::ui {
     void remoteInstPage::onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos) {
         // Loading renders pump input too. Do not let browser shortcuts start
         // another operation while the catalog or save list is being replaced.
-        if (this->loadingProgressText->IsVisible())
+        if (this->loadingProgressText->IsVisible()) {
+            if (this->refreshingLibrary)
+                this->updateLoadingActivity();
             return;
+        }
         int bottomTapX = 0;
         if (DetectBottomHintTap(Pos, this->bottomHintTouch, 668, 52, bottomTapX)) {
             Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);

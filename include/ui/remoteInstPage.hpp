@@ -25,6 +25,8 @@ namespace inst::ui {
             PU_SMART_CTOR(remoteInstPage)
             void startRemote(bool forceRefresh = false);
             void startInstall();
+            void showLibraryRefresh();
+            bool isLibraryRefreshActive() const { return refreshingLibrary; }
             void beginQueueAddMode();
             void endQueueAddMode();
             std::vector<remoteInstStuff::RemoteItem> getQueueCatalog() const;
@@ -196,6 +198,9 @@ namespace inst::ui {
             TextBlock::Ref saveVersionSelectorHintText;
             pu::ui::elm::Menu::Ref saveVersionSelectorMenu;
             std::string loadingStageLabel;
+            bool refreshingLibrary = false;
+            u64 libraryRefreshLastRenderTick = 0;
+            void renderLibraryRefresh(bool force = false);
             bool loadingIndeterminate = false;
             int loadingPercent = 0;
             u64 loadingStartTick = 0;

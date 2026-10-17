@@ -2897,6 +2897,9 @@ namespace remoteInstStuff {
                 inst::ui::mainApp->CreateShowDialog(std::to_string(completedCount) + "inst.info_page.desc0"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
             else
                 inst::ui::mainApp->CreateShowDialog(currentName + "inst.info_page.desc1"_lang, "inst.info_page.complete"_lang, {"common.ok"_lang}, true);
+            // Replace the acknowledged dialog immediately, including while
+            // the success sound and install-service cleanup finish.
+            inst::ui::mainApp->remoteinstPage->showLibraryRefresh();
             audioThread.join();
         }
 
