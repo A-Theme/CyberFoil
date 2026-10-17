@@ -4,13 +4,16 @@
 #include <exception>
 #include <stdexcept>
 #include <functional>
+#include <fstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <cctype>
 #include <cstdint>
+#include <chrono>
 #include <cstdlib>
 #include <sstream>
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #include <switch.h>
 #include "ui/MainApplication.hpp"
 #include "ui/instPage.hpp"
@@ -880,6 +883,45 @@ namespace {
         return out.substr(first, (last - first) + 1);
     }
 
+    // Validate the bounded server JPEG without invoking image codecs on the worker.
+    bool ReadScreenshotSize(const std::string& path, int& width, int& height) {
+        width = height = 0;
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        const auto size = file.tellg();
+        if (!file || size < 12 || size > 8 * 1024 * 1024) return false;
+        const auto byte = [&]() -> int {
+            char value;
+            return file.get(value) ? static_cast<unsigned char>(value) : -1;
+        };
+        const auto word = [&]() -> int {
+            const int high = byte(), low = byte();
+            return high < 0 || low < 0 ? -1 : (high << 8) | low;
+        };
+        file.seekg(-2, std::ios::end);
+        if (word() != 0xFFD9) return false;
+        file.seekg(0);
+        if (word() != 0xFFD8) return false;
+        for (int segment = 0; segment < 256 && file; ++segment) {
+            if (byte() != 0xFF) return false;
+            int marker;
+            do { marker = byte(); } while (marker == 0xFF);
+            if (marker < 0 || marker == 0 || marker == 0xDA || marker == 0xD9) return false;
+            if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+            const int length = word();
+            if (length < 2) return false;
+            if (marker == 0xC0 || marker == 0xC1 || marker == 0xC2) {
+                if (length < 8 || byte() != 8) return false;
+                height = word();
+                width = word();
+                const int components = byte();
+                return (components == 1 || components == 3) && length == 8 + 3 * components
+                    && width > 0 && height > 0 && width <= 1280 && height <= 720;
+            }
+            file.seekg(length - 2, std::ios::cur);
+        }
+        return false;
+    }
+
     std::vector<std::string> WrapDescriptionLines(const std::string& text, std::size_t maxLineChars)
     {
         std::vector<std::string> lines;
@@ -944,6 +986,49 @@ namespace {
 }
 
 namespace inst::ui {
+    // Image/texture creation is confined to the UI thread, with explicit failure checks.
+    class RemoteScreenshotImage : public pu::ui::elm::Element {
+        public:
+            ~RemoteScreenshotImage() override { this->Clear(); }
+            void Clear() {
+                pu::ui::render::DeleteTexture(this->texture);
+                this->SetVisible(false);
+            }
+            bool SetImage(const std::string& path) {
+                this->Clear();
+                int sourceWidth = 0, sourceHeight = 0;
+                if (!ReadScreenshotSize(path, sourceWidth, sourceHeight)) return false;
+                SDL_Surface* surface = IMG_Load(path.c_str());
+                if (!surface) return false;
+                if (surface->w != sourceWidth || surface->h != sourceHeight) {
+                    SDL_FreeSurface(surface);
+                    return false;
+                }
+                this->texture = SDL_CreateTextureFromSurface(pu::ui::render::GetMainRenderer(), surface);
+                SDL_FreeSurface(surface);
+                if (!this->texture) return false;
+                const double scale = std::min(1.0, std::min(624.0 / sourceWidth, 351.0 / sourceHeight));
+                this->options.Width = std::max(1, static_cast<int>(sourceWidth * scale));
+                this->options.Height = std::max(1, static_cast<int>(sourceHeight * scale));
+                this->x = 600 + (624 - this->options.Width) / 2;
+                this->y = 170 + (351 - this->options.Height) / 2;
+                return true;
+            }
+            bool IsImageValid() const { return this->texture != nullptr; }
+            s32 GetX() override { return this->x; }
+            s32 GetY() override { return this->y; }
+            s32 GetWidth() override { return this->options.Width; }
+            s32 GetHeight() override { return this->options.Height; }
+            void OnRender(pu::ui::render::Renderer::Ref& drawer, s32 x, s32 y) override {
+                if (this->texture) drawer->RenderTexture(this->texture, x, y, this->options);
+            }
+            void OnInput(u64, u64, u64, pu::ui::Touch) override {}
+        private:
+            pu::ui::render::NativeTexture texture = nullptr;
+            pu::ui::render::NativeTextureRenderOptions options = pu::ui::render::NativeTextureRenderOptions::Default;
+            s32 x = 600, y = 170;
+    };
+
     extern MainApplication *mainApp;
 
     remoteInstPage::remoteInstPage() : Layout::Layout() {
@@ -1099,9 +1184,16 @@ namespace inst::ui {
         this->descriptionOverlayBodyText = TextBlock::New(46, 142, "", 19);
         this->descriptionOverlayBodyText->SetColor(COLOR("#FFFFFFFF"));
         this->descriptionOverlayBodyText->SetVisible(false);
-        this->descriptionOverlayHintText = TextBlock::New(46, 618, "B Close    Up/Down Scroll", 18);
-        this->descriptionOverlayHintText->SetColor(COLOR("#FFFFFFFF"));
+        this->descriptionOverlayHintText = TextBlock::New(46, 548, "", 18);
+        this->descriptionOverlayHintText->SetColor(inst::theme::Color("muted_text", COLOR("#A8A8B8FF")));
         this->descriptionOverlayHintText->SetVisible(false);
+        this->descriptionScreenshotBack = Rectangle::New(592, 162, 640, 367, inst::theme::Color("panel", COLOR("#17171CFF")), 10);
+        this->descriptionScreenshotBack->SetVisible(false);
+        this->descriptionScreenshotImage = std::make_shared<RemoteScreenshotImage>();
+        this->descriptionScreenshotImage->SetVisible(false);
+        this->descriptionScreenshotStatus = TextBlock::New(600, 548, "", 18);
+        this->descriptionScreenshotStatus->SetColor(inst::theme::Color("muted_text", COLOR("#A8A8B8FF")));
+        this->descriptionScreenshotStatus->SetVisible(false);
         this->saveVersionSelectorRect = Rectangle::New(90, 96, 1100, 548, inst::config::oledMode ? COLOR("#000000EE") : COLOR("#170909EE"));
         this->saveVersionSelectorRect->SetVisible(false);
         this->saveVersionSelectorTitleText = TextBlock::New(114, 112, "", 24);
@@ -1247,12 +1339,17 @@ namespace inst::ui {
         this->Add(this->descriptionOverlayTitleText);
         this->Add(this->descriptionOverlayBodyText);
         this->Add(this->descriptionOverlayHintText);
+        this->Add(this->descriptionScreenshotBack);
+        this->Add(this->descriptionScreenshotImage);
+        this->Add(this->descriptionScreenshotStatus);
         this->Add(this->saveVersionSelectorRect);
         this->Add(this->saveVersionSelectorTitleText);
         this->Add(this->saveVersionSelectorMenu);
         this->Add(this->saveVersionSelectorDetailText);
         this->Add(this->saveVersionSelectorHintText);
-        this->AddThread([this] { this->updateBrowseDecorations(); });
+        this->AddThread([this] { this->updateDescriptionMedia(); this->updateBrowseDecorations(); });
+        const std::string screenshotCacheDir = inst::config::appDir + "/cache/screenshots";
+        this->descriptionMediaThread = std::thread([this, screenshotCacheDir] { this->descriptionMediaThreadMain(screenshotCacheDir); });
         this->iconDownloadThread = std::thread([this]() {
             this->iconDownloadThreadMain();
         });
@@ -1263,6 +1360,10 @@ namespace inst::ui {
     }
 
     void remoteInstPage::stopIconDownloadWorker() {
+        this->descriptionMediaStop.store(true);
+        this->descriptionMediaGeneration.fetch_add(1);
+        this->descriptionMediaCv.notify_all();
+        if (this->descriptionMediaThread.joinable()) this->descriptionMediaThread.join();
         this->iconDownloadStopRequested.store(true);
         this->iconDownloadCv.notify_all();
         if (this->iconDownloadThread.joinable())
@@ -3923,6 +4024,7 @@ namespace inst::ui {
     }
 
     void remoteInstPage::startRemote(bool forceRefresh) {
+        this->closeDescriptionOverlay();
         this->refreshingLibrary = false;
         ResetRemoteDlcTrace();
         RemoteDlcTrace("startRemote begin forceRefresh=%d remoteHideInstalled=%d hideInstalledSection=%d", forceRefresh ? 1 : 0, inst::config::remoteHideInstalled ? 1 : 0, inst::config::remoteHideInstalledSection ? 1 : 0);
@@ -4741,14 +4843,22 @@ namespace inst::ui {
                 return;
             }
 
+            if (!this->descriptionScreenshotPaths.empty()) {
+                int tapX = 0;
+                const bool tapped = DetectBottomHintTap(Pos, this->descriptionScreenshotTouch, 162, 367, tapX);
+                if ((Down & (HidNpadButton_L | HidNpadButton_AnyLeft)) || (tapped && tapX >= 592 && tapX < 912))
+                    this->changeDescriptionScreenshot(-1);
+                else if ((Down & (HidNpadButton_R | HidNpadButton_AnyRight)) || (tapped && tapX >= 912 && tapX < 1232))
+                    this->changeDescriptionScreenshot(1);
+            }
             int delta = 0;
             if (Down & (HidNpadButton_Up | HidNpadButton_StickLUp | HidNpadButton_StickRUp))
                 delta = -1;
             else if (Down & (HidNpadButton_Down | HidNpadButton_StickLDown | HidNpadButton_StickRDown))
                 delta = 1;
-            else if (Down & HidNpadButton_Left)
+            else if (this->descriptionScreenshotPaths.empty() && (Down & HidNpadButton_AnyLeft))
                 delta = -(this->descriptionOverlayVisibleLines / 2);
-            else if (Down & HidNpadButton_Right)
+            else if (this->descriptionScreenshotPaths.empty() && (Down & HidNpadButton_AnyRight))
                 delta = (this->descriptionOverlayVisibleLines / 2);
 
             if (delta != 0) {
@@ -5546,23 +5656,251 @@ namespace inst::ui {
         if (!this->tryGetCurrentDescription(title, description))
             return;
 
-        this->descriptionOverlayLines = WrapDescriptionLines(description, 102);
-        if (this->descriptionOverlayLines.empty())
-            this->descriptionOverlayLines.push_back("No description available for this title.");
+        this->descriptionOverlayFullText = description;
         this->descriptionOverlayOffset = 0;
         this->descriptionOverlayVisible = true;
+        this->descriptionGridTitleWasVisible = this->gridTitleText->IsVisible();
+        this->gridTitleText->SetVisible(false);
         this->descriptionOverlayTitleText->SetText(title);
         this->descriptionOverlayRect->SetVisible(true);
         this->descriptionOverlayTitleText->SetVisible(true);
         this->descriptionOverlayBodyText->SetVisible(true);
         this->descriptionOverlayHintText->SetVisible(true);
-        const std::string overlayButtonsText = "B Close    Up/Down Scroll";
-        this->butText->SetText(overlayButtonsText);
-        this->bottomHintSegments = BuildBottomHintSegments(overlayButtonsText, 10, 20);
+        this->secondaryHintText->SetVisible(false);
+        this->secondaryHintSegments.clear();
+        this->bottomHintTouch = {};
+        this->requestDescriptionMedia();
+        this->reflowDescriptionOverlay();
+    }
+
+    void remoteInstPage::requestDescriptionMedia() {
+        const auto generation = this->descriptionMediaGeneration.fetch_add(1) + 1;
+        this->descriptionMediaPending = false;
+        this->descriptionMediaStatus.clear();
+        this->descriptionScreenshotIndex = 0;
+        this->descriptionScreenshotPaths.clear();
+        this->descriptionScreenshotFailed.clear();
+        this->descriptionScreenshotDisplayedPath.clear();
+        this->descriptionScreenshotTouch = {};
+        // A server can expose the title-info API even when its catalog used the legacy fallback.
+        if (this->activeRemoteUrl.empty()
+            || this->isSaveSyncSection() || this->isCheatsSection() || this->descriptionMediaStop.load()) return;
+        int index = this->remoteGridMode ? this->remoteGridIndex : this->menu->GetSelectedIndex();
+        if (this->isInstalledSection() && this->remoteGridMode) index = this->gridSelectedIndex;
+        DescriptionMediaRequest request;
+        if (index < 0 || index >= static_cast<int>(this->visibleItems.size())
+            || !DeriveBaseTitleId(this->visibleItems[index], request.titleId)) return;
+        request.generation = generation;
+        request.remoteUrl = this->activeRemoteUrl;
+        request.user = inst::config::remoteUser;
+        request.pass = inst::config::remotePass;
+        request.cacheDir = inst::config::appDir + "/cache/screenshots";
+        this->descriptionMediaPending = true;
+        {
+            std::lock_guard<std::mutex> lock(this->descriptionMediaMutex);
+            this->descriptionMediaRequest = std::move(request);
+            this->descriptionMediaRequestPending = true;
+        }
+        this->descriptionMediaCv.notify_one();
+    }
+
+    void remoteInstPage::descriptionMediaThreadMain(const std::string& cacheDir) {
+        // Clear the previous session's screenshots once, before this worker loads any images.
+        try {
+            std::error_code error;
+            std::filesystem::directory_iterator it(cacheDir, error), end;
+            for (; !error && it != end && !this->descriptionMediaStop.load(); it.increment(error)) {
+                std::error_code fileError;
+                if (std::filesystem::is_regular_file(it->symlink_status(fileError)) && !fileError)
+                    std::filesystem::remove(it->path(), fileError);
+            }
+        } catch (...) {}
+        for (;;) {
+            DescriptionMediaRequest request;
+            {
+                std::unique_lock<std::mutex> lock(this->descriptionMediaMutex);
+                this->descriptionMediaCv.wait(lock, [this] { return this->descriptionMediaStop.load() || this->descriptionMediaRequestPending; });
+                if (this->descriptionMediaStop.load()) return;
+                request = std::move(this->descriptionMediaRequest);
+                this->descriptionMediaRequestPending = false;
+            }
+            const auto canceled = [this, &request] {
+                return this->descriptionMediaStop.load() || this->descriptionMediaGeneration.load() != request.generation;
+            };
+            DescriptionMediaResult result;
+            result.generation = request.generation;
+            const auto publish = [&] {
+                if (canceled()) return;
+                std::lock_guard<std::mutex> lock(this->descriptionMediaMutex);
+                this->descriptionMediaResult = result;
+                this->descriptionMediaDirty.store(true);
+            };
+            try {
+                if (canceled()) continue;
+                remoteInstStuff::RemoteTitleInfo info;
+                if (!remoteInstStuff::FetchRemoteTitleInfo(request.remoteUrl, request.titleId, request.user, request.pass, info, result.status, canceled)) {
+                    publish();
+                    continue;
+                }
+                if (canceled()) continue;
+                result.description = std::move(info.description);
+                if (info.screenshots.empty()) result.status = "No screenshots available for this title.";
+                result.paths.resize(info.screenshots.size());
+                result.failed.resize(info.screenshots.size(), false);
+                publish();
+                std::error_code error;
+                std::filesystem::create_directories(request.cacheDir, error);
+                for (std::size_t i = 0; i < info.screenshots.size() && !canceled(); ++i) {
+                    // The shop endpoint already returns a bounded JPEG. Cache it without codec work.
+                    std::uint64_t hash = 14695981039346656037ULL;
+                    for (unsigned char c : request.remoteUrl + "\n" + request.user + "\n" + info.screenshots[i]) {
+                        hash ^= c;
+                        hash *= 1099511628211ULL;
+                    }
+                    char key[32];
+                    std::snprintf(key, sizeof(key), "native-%016llx.jpg", static_cast<unsigned long long>(hash));
+                    const std::string path = request.cacheDir + "/" + key;
+                    const std::string raw = path + ".download";
+                    bool ready = std::filesystem::exists(path, error) && std::filesystem::file_size(path, error) > 0 && !error;
+                    if (ready) {
+                        const auto modified = std::filesystem::last_write_time(path, error);
+                        const auto age = std::filesystem::file_time_type::clock::now() - modified;
+                        ready = !error && age >= std::chrono::seconds(0) && age < std::chrono::hours(1);
+                    }
+                    int width = 0, height = 0;
+                    if (ready) ready = ReadScreenshotSize(path, width, height);
+                    if (!ready && remoteInstStuff::DownloadRemoteScreenshot(info.screenshots[i], request.remoteUrl, request.user, request.pass, raw, canceled)
+                        && !canceled() && ReadScreenshotSize(raw, width, height)) {
+                        std::filesystem::rename(raw, path, error);
+                        ready = !error;
+                    }
+                    std::filesystem::remove(raw, error);
+                    if (ready) result.paths[i] = path;
+                    else result.failed[i] = true;
+                    publish();
+                }
+            } catch (...) {
+                result.status = "Unable to load screenshots. Close the description and try again.";
+                for (std::size_t i = 0; i < result.failed.size(); ++i)
+                    if (i >= result.paths.size() || result.paths[i].empty()) result.failed[i] = true;
+                if (result.paths.size() != result.failed.size()) result.paths.clear();
+                publish();
+            }
+        }
+    }
+
+    void remoteInstPage::updateDescriptionMedia() {
+        if (!this->descriptionMediaDirty.exchange(false)) return;
+        DescriptionMediaResult result;
+        {
+            std::lock_guard<std::mutex> lock(this->descriptionMediaMutex);
+            result = this->descriptionMediaResult;
+        }
+        if (!this->descriptionOverlayVisible || result.generation != this->descriptionMediaGeneration.load()) return;
+        const bool hadGallery = this->descriptionMediaPending || !this->descriptionScreenshotPaths.empty();
+        const auto description = NormalizeDescriptionWhitespace(result.description);
+        const bool changedText = !description.empty() && description != this->descriptionOverlayFullText;
+        if (changedText) this->descriptionOverlayFullText = description;
+        this->descriptionMediaPending = false;
+        this->descriptionMediaStatus = std::move(result.status);
+        this->descriptionScreenshotPaths = std::move(result.paths);
+        this->descriptionScreenshotFailed = std::move(result.failed);
+        if (this->descriptionScreenshotIndex >= static_cast<int>(this->descriptionScreenshotPaths.size())) this->descriptionScreenshotIndex = 0;
+        if (changedText || hadGallery != !this->descriptionScreenshotPaths.empty()) this->reflowDescriptionOverlay();
+        else {
+            this->refreshDescriptionScreenshot();
+            this->refreshDescriptionOverlayBody();
+        }
+    }
+
+    void remoteInstPage::refreshDescriptionScreenshot() {
+        const bool visible = this->descriptionOverlayVisible && (this->descriptionMediaPending || !this->descriptionScreenshotPaths.empty());
+        this->descriptionScreenshotBack->SetVisible(visible);
+        this->descriptionScreenshotStatus->SetVisible(this->descriptionOverlayVisible && (visible || !this->descriptionMediaStatus.empty()));
+        this->descriptionScreenshotStatus->SetX(visible ? 600 : 46);
+        this->descriptionScreenshotStatus->SetY(visible ? 548 : 580);
+        this->descriptionScreenshotImage->SetVisible(false);
+        if (!visible) {
+            this->descriptionScreenshotStatus->SetText(ClipBrowseText(this->descriptionMediaStatus, 18, 1188));
+            return;
+        }
+        if (this->descriptionMediaPending) {
+            this->descriptionScreenshotStatus->SetText("Loading screenshots...");
+            return;
+        }
+        const auto index = static_cast<std::size_t>(this->descriptionScreenshotIndex);
+        const auto& path = this->descriptionScreenshotPaths[index];
+        bool ready = false;
+        if (!path.empty()) {
+            if (path != this->descriptionScreenshotDisplayedPath) {
+                this->descriptionScreenshotImage->SetImage(path);
+                this->descriptionScreenshotDisplayedPath = path;
+            }
+            ready = this->descriptionScreenshotImage->IsImageValid();
+        }
+        this->descriptionScreenshotImage->SetVisible(ready);
+        std::string status = "Screenshot " + std::to_string(index + 1) + " of " + std::to_string(this->descriptionScreenshotPaths.size());
+        if (!ready) status += this->descriptionScreenshotFailed[index] || !path.empty() ? "    Unavailable; reopen to retry" : "    Loading...";
+        this->descriptionScreenshotStatus->SetText(status);
+    }
+
+    void remoteInstPage::changeDescriptionScreenshot(int direction) {
+        const int count = static_cast<int>(this->descriptionScreenshotPaths.size());
+        if (count < 2) return;
+        this->descriptionScreenshotIndex = (this->descriptionScreenshotIndex + direction + count) % count;
+        this->refreshDescriptionScreenshot();
+    }
+
+    void remoteInstPage::reflowDescriptionOverlay() {
+        const int width = this->descriptionMediaPending || !this->descriptionScreenshotPaths.empty() ? 524 : 1188;
+        const auto font = pu::ui::render::LoadDefaultFont(19);
+        const auto fallback = pu::ui::render::LoadSharedFont(pu::ui::render::SharedFont::NintendoExtended, 19);
+        this->descriptionOverlayLines.clear();
+        std::string remaining = this->descriptionOverlayFullText;
+        while (!remaining.empty()) {
+            const auto boundaries = BuildUtf8Boundaries(remaining);
+            std::size_t low = 1, high = boundaries.size() - 1, best = 1;
+            while (low <= high) {
+                const auto mid = (low + high) / 2;
+                const auto part = remaining.substr(0, boundaries[mid]);
+                int measuredWidth = 0, measuredHeight = 0;
+                const bool fits = font ? TTF_SizeUTF8(font, fallback, part.c_str(), &measuredWidth, &measuredHeight) == 0 && measuredWidth <= width
+                    : mid <= static_cast<std::size_t>(width / 12);
+                if (fits) { best = mid; low = mid + 1; }
+                else high = mid - 1;
+            }
+            std::size_t end = boundaries[best];
+            if (end < remaining.size()) {
+                const auto space = remaining.rfind(' ', end);
+                if (space != std::string::npos && space > 0) end = space;
+            }
+            this->descriptionOverlayLines.push_back(remaining.substr(0, end));
+            remaining.erase(0, end);
+            const auto next = remaining.find_first_not_of(' ');
+            if (next == std::string::npos) remaining.clear();
+            else remaining.erase(0, next);
+        }
+        if (this->descriptionOverlayLines.empty()) this->descriptionOverlayLines.push_back("No description available for this title.");
+        this->descriptionOverlayOffset = std::min(this->descriptionOverlayOffset,
+            std::max(0, static_cast<int>(this->descriptionOverlayLines.size()) - this->descriptionOverlayVisibleLines));
+        this->refreshDescriptionScreenshot();
         this->refreshDescriptionOverlayBody();
     }
 
     void remoteInstPage::closeDescriptionOverlay() {
+        this->descriptionMediaGeneration.fetch_add(1);
+        {
+            std::lock_guard<std::mutex> lock(this->descriptionMediaMutex);
+            this->descriptionMediaRequestPending = false;
+        }
+        this->descriptionMediaPending = false;
+        this->descriptionScreenshotPaths.clear();
+        this->descriptionScreenshotFailed.clear();
+        this->descriptionScreenshotDisplayedPath.clear();
+        this->descriptionScreenshotImage->Clear();
+        this->descriptionScreenshotBack->SetVisible(false);
+        this->descriptionScreenshotStatus->SetVisible(false);
+        this->descriptionScreenshotTouch = {};
         this->descriptionOverlayVisible = false;
         this->descriptionOverlayLines.clear();
         this->descriptionOverlayOffset = 0;
@@ -5570,6 +5908,9 @@ namespace inst::ui {
         this->descriptionOverlayTitleText->SetVisible(false);
         this->descriptionOverlayBodyText->SetVisible(false);
         this->descriptionOverlayHintText->SetVisible(false);
+        this->gridTitleText->SetVisible(this->descriptionGridTitleWasVisible);
+        this->descriptionGridTitleWasVisible = false;
+        this->bottomHintTouch = {};
         this->updateButtonsText();
     }
 
@@ -5598,7 +5939,9 @@ namespace inst::ui {
         const int lineCount = static_cast<int>(this->descriptionOverlayLines.size());
         if (lineCount <= 0) {
             this->descriptionOverlayBodyText->SetText("");
-            this->descriptionOverlayHintText->SetText("B Close");
+            this->descriptionOverlayHintText->SetVisible(false);
+            this->butText->SetText(" Close");
+            this->bottomHintSegments = BuildBottomHintSegments(" Close", this->butText->GetX(), 18);
             return;
         }
 
@@ -5619,14 +5962,19 @@ namespace inst::ui {
         }
         this->descriptionOverlayBodyText->SetText(body);
 
-        if (lineCount > this->descriptionOverlayVisibleLines) {
-            const int shownStart = start + 1;
-            const int shownEnd = end;
-            this->descriptionOverlayHintText->SetText(
-                "B Close    Up/Down Scroll    " + std::to_string(shownStart) + "-" + std::to_string(shownEnd) + "/" + std::to_string(lineCount));
-        } else {
-            this->descriptionOverlayHintText->SetText("B Close");
-        }
+        const bool canScroll = lineCount > this->descriptionOverlayVisibleLines;
+        this->descriptionOverlayHintText->SetVisible(canScroll);
+        if (canScroll)
+            this->descriptionOverlayHintText->SetText("Description · Lines " + std::to_string(start + 1) + "–" + std::to_string(end) + " of " + std::to_string(lineCount));
+        std::string hints = " Close";
+        if (canScroll) hints += "    ↑/↓ Scroll description";
+        if (this->descriptionScreenshotPaths.size() > 1)
+            hints += "     Previous screenshot     Next screenshot";
+        this->butText->SetFontSize(18);
+        this->butText->SetText(hints);
+        this->secondaryHintText->SetVisible(false);
+        this->secondaryHintSegments.clear();
+        this->bottomHintSegments = BuildBottomHintSegments(hints, this->butText->GetX(), 18);
     }
 
     void remoteInstPage::updateDescriptionPanel() {

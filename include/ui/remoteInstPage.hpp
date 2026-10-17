@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <memory>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -18,6 +19,7 @@
 
 using namespace pu::ui::elm;
 namespace inst::ui {
+    class RemoteScreenshotImage;
     class remoteInstPage : public pu::ui::Layout
     {
         public:
@@ -123,9 +125,48 @@ namespace inst::ui {
             int allSortMode = 0;
             bool descriptionVisible = false;
             bool descriptionOverlayVisible = false;
+            bool descriptionGridTitleWasVisible = false;
             std::vector<std::string> descriptionOverlayLines;
             int descriptionOverlayOffset = 0;
             int descriptionOverlayVisibleLines = 16;
+            std::string descriptionOverlayFullText;
+            std::shared_ptr<RemoteScreenshotImage> descriptionScreenshotImage;
+            Rectangle::Ref descriptionScreenshotBack;
+            TextBlock::Ref descriptionScreenshotStatus;
+            BottomHintTouchState descriptionScreenshotTouch;
+            bool descriptionMediaPending = false;
+            std::string descriptionMediaStatus;
+            int descriptionScreenshotIndex = 0;
+            std::vector<std::string> descriptionScreenshotPaths;
+            std::vector<bool> descriptionScreenshotFailed;
+            std::string descriptionScreenshotDisplayedPath;
+            struct DescriptionMediaRequest {
+                std::uint64_t generation = 0;
+                std::uint64_t titleId = 0;
+                std::string remoteUrl, user, pass, cacheDir;
+            };
+            struct DescriptionMediaResult {
+                std::uint64_t generation = 0;
+                std::string description;
+                std::string status;
+                std::vector<std::string> paths;
+                std::vector<bool> failed;
+            };
+            std::thread descriptionMediaThread;
+            std::mutex descriptionMediaMutex;
+            std::condition_variable descriptionMediaCv;
+            DescriptionMediaRequest descriptionMediaRequest;
+            DescriptionMediaResult descriptionMediaResult;
+            bool descriptionMediaRequestPending = false;
+            std::atomic<bool> descriptionMediaStop{false};
+            std::atomic<bool> descriptionMediaDirty{false};
+            std::atomic<std::uint64_t> descriptionMediaGeneration{0};
+            void descriptionMediaThreadMain(const std::string& cacheDir);
+            void requestDescriptionMedia();
+            void updateDescriptionMedia();
+            void refreshDescriptionScreenshot();
+            void changeDescriptionScreenshot(int direction);
+            void reflowDescriptionOverlay();
             struct IconDownloadRequest {
                 std::uint64_t generation = 0;
                 std::string key;
