@@ -162,6 +162,7 @@ namespace inst::ui {
             Rectangle::Ref loadingBarFill;
             Rectangle::Ref loadingStagesBack;
             TextBlock::Ref loadingStagesText;
+            TextBlock::Ref loadingDetailText;
             Rectangle::Ref topRect;
             Rectangle::Ref infoRect;
             Rectangle::Ref botRect;
@@ -195,12 +196,14 @@ namespace inst::ui {
             TextBlock::Ref saveVersionSelectorHintText;
             pu::ui::elm::Menu::Ref saveVersionSelectorMenu;
             std::string loadingStageLabel;
-            int loadingStageIndex = -1;
-            int loadingSpinnerFrame = 0;
-            u64 loadingSpinnerLastTick = 0;
+            bool loadingIndeterminate = false;
+            int loadingPercent = 0;
+            u64 loadingStartTick = 0;
+            u64 loadingLastUpdateTick = 0;
+            std::string loadingTransferDetail;
+            void updateLoadingActivity(std::uint64_t downloaded = 0, std::uint64_t total = 0, bool transfer = false);
             void centerPageInfoText();
             void refreshLoadingStagesText();
-            int mapLoadingStageToIndex(const std::string& stage) const;
             void setLoadingProgressStage(const std::string& stage);
             void setLoadingProgress(int percent, bool visible);
             void applyAllSectionSort();

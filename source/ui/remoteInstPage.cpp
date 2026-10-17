@@ -978,18 +978,21 @@ namespace inst::ui {
         this->batteryCap = Rectangle::New(0, 0, 3, 6, COLOR("#FFFFFF66"));
         this->pageInfoText = TextBlock::New(10, 81, "", 34);
         this->pageInfoText->SetColor(COLOR("#FFFFFFFF"));
-        this->loadingProgressText = TextBlock::New(0, 504, "", 24);
+        this->loadingProgressText = TextBlock::New(0, 320, "", 24);
         this->loadingProgressText->SetColor(COLOR("#FFFFFFFF"));
         this->loadingProgressText->SetVisible(false);
-        this->loadingBarBack = Rectangle::New(260, 540, 760, 14, COLOR("#FFFFFF33"));
+        this->loadingBarBack = Rectangle::New(260, 386, 760, 8, inst::theme::Color("progress_track", COLOR("#FFFFFF33")), 4);
         this->loadingBarBack->SetVisible(false);
-        this->loadingBarFill = Rectangle::New(260, 540, 0, 14, COLOR("#34C759FF"));
+        this->loadingBarFill = Rectangle::New(260, 386, 0, 8, inst::theme::Color("accent", COLOR("#34C759FF")), 4);
         this->loadingBarFill->SetVisible(false);
-        this->loadingStagesBack = Rectangle::New(220, 208, 840, 276, inst::config::oledMode ? COLOR("#101010CC") : COLOR("#170909CC"));
+        this->loadingStagesBack = Rectangle::New(220, 220, 840, 260, inst::theme::Color("panel", inst::config::oledMode ? COLOR("#101010EE") : COLOR("#170909EE")), 18);
         this->loadingStagesBack->SetVisible(false);
-        this->loadingStagesText = TextBlock::New(252, 230, "", 24);
+        this->loadingStagesText = TextBlock::New(260, 252, "", 32);
         this->loadingStagesText->SetColor(COLOR("#E9FFF2FF"));
         this->loadingStagesText->SetVisible(false);
+        this->loadingDetailText = TextBlock::New(260, 420, "", 20);
+        this->loadingDetailText->SetColor(COLOR("#FFFFFFBB"));
+        this->loadingDetailText->SetVisible(false);
         this->searchInfoText = TextBlock::New(0, 91, "", 20);
         this->searchInfoText->SetColor(COLOR("#FFFFFFFF"));
         this->searchInfoText->SetVisible(false);
@@ -1117,11 +1120,12 @@ namespace inst::ui {
         this->Add(this->ipText);
         this->Add(this->butText);
         this->Add(this->pageInfoText);
+        this->Add(this->loadingStagesBack);
+        this->Add(this->loadingStagesText);
         this->Add(this->loadingProgressText);
         this->Add(this->loadingBarBack);
         this->Add(this->loadingBarFill);
-        this->Add(this->loadingStagesBack);
-        this->Add(this->loadingStagesText);
+        this->Add(this->loadingDetailText);
         this->Add(this->searchInfoText);
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
@@ -1476,113 +1480,107 @@ namespace inst::ui {
 
     void remoteInstPage::refreshLoadingStagesText()
     {
-        static const char* kLoadingStages[] = {
-            "Connect to Remote",
-            "Fetch Catalog",
-            "Parse Response",
-            "Build Sections",
-            "Filter and Sort",
-            "Sync Save Data",
-            "Finalize"
-        };
-        static const char* kSpinnerFrames[] = {
-            "●···",
-            "·●··",
-            "··●·",
-            "···●"
-        };
-        const int spinnerCount = static_cast<int>(sizeof(kSpinnerFrames) / sizeof(kSpinnerFrames[0]));
-        const int spinnerIndex = (spinnerCount > 0) ? (this->loadingSpinnerFrame % spinnerCount) : 0;
-        const char* spinner = (spinnerCount > 0) ? kSpinnerFrames[spinnerIndex] : "|";
-
-        std::string text = "inst.remote.loading"_lang + "\n";
-        text += "--------------------------------\n";
-        for (int i = 0; i < static_cast<int>(sizeof(kLoadingStages) / sizeof(kLoadingStages[0])); i++) {
-            if (i < this->loadingStageIndex) {
-                text += "[\xEE\x85\x8B] ";
-            } else if (i == this->loadingStageIndex) {
-                text += "[";
-                text += spinner;
-                text += "] ";
-            } else {
-                text += "[○] ";
-            }
-
-            if (i + 1 < 10)
-                text += "0";
-            text += std::to_string(i + 1);
-            text += "  ";
-            text += kLoadingStages[i];
-            if (i + 1 < static_cast<int>(sizeof(kLoadingStages) / sizeof(kLoadingStages[0])))
-                text += "\n";
+        const std::string title = "inst.remote.loading"_lang;
+        if (this->loadingStagesText->GetText() != title) {
+            this->loadingStagesText->SetText(title);
+            CenterTextX(this->loadingStagesText);
         }
-        this->loadingStagesText->SetText(text);
     }
 
-    int remoteInstPage::mapLoadingStageToIndex(const std::string& stage) const
+    void remoteInstPage::updateLoadingActivity(std::uint64_t downloaded, std::uint64_t total, bool transfer)
     {
-        if (stage.find("Preparing Remote") != std::string::npos)
-            return 0;
-        if (stage.find("Fetching Remote list") != std::string::npos
-            || stage.find("Finishing catalog transfer") != std::string::npos)
-            return 1;
-        if (stage.find("Parsing Remote response") != std::string::npos)
-            return 2;
-        if (stage.find("Scanning Remote sections") != std::string::npos
-            || stage.find("Preparing sections") != std::string::npos
-            || stage.find("Preparing updates section") != std::string::npos
-            || stage.find("Preparing DLC section") != std::string::npos
-            || stage.find("Preparing installed section") != std::string::npos
-            || stage.find("Preparing owned sections") != std::string::npos)
-            return 3;
-        if (stage.find("Checking available updates") != std::string::npos
-            || stage.find("Filtering sections") != std::string::npos
-            || stage.find("Sorting titles") != std::string::npos)
-            return 4;
-        if (stage.find("Preparing save sync") != std::string::npos
-            || stage.find("Loading save sync list") != std::string::npos)
-            return 5;
-        if (stage.find("Finalizing Remote") != std::string::npos
-            || stage.find("Remote ready") != std::string::npos)
-            return 6;
-        return -1;
+        const u64 now = armGetSystemTick();
+        const u64 frequency = armGetSystemTickFreq();
+        // Animate geometry each frame; throttle transfer text independently.
+        const u64 elapsed = now - this->loadingStartTick;
+        if (this->loadingIndeterminate) {
+            const u64 period = frequency * 2;
+            const u64 phase = elapsed % period;
+            const u64 distance = phase < period / 2 ? phase : period - phase;
+            this->loadingBarFill->SetX(260 + static_cast<int>((distance * 600) / (period / 2)));
+            this->loadingBarFill->SetWidth(160);
+        }
+        if (this->loadingLastUpdateTick != 0 && now - this->loadingLastUpdateTick < frequency / 4)
+            return;
+        this->loadingLastUpdateTick = now;
+        if (transfer) {
+            char detail[96];
+            if (downloaded == 0) {
+                this->loadingTransferDetail = "Waiting for Remote";
+            } else if (total > 0) {
+                std::snprintf(detail, sizeof(detail), "%.1f / %.1f MiB received",
+                    downloaded / 1048576.0, total / 1048576.0);
+                this->loadingTransferDetail = detail;
+            } else {
+                std::snprintf(detail, sizeof(detail), "%.1f MiB received", downloaded / 1048576.0);
+                this->loadingTransferDetail = detail;
+            }
+        }
+        std::string detail = this->loadingTransferDetail;
+        if (!detail.empty()) detail += "   |   ";
+        detail += std::to_string(elapsed / frequency) + "s elapsed";
+        if (elapsed / frequency >= 15 && transfer)
+            detail += "   |   Still working...";
+        if (this->loadingDetailText->GetText() != detail) {
+            this->loadingDetailText->SetText(detail);
+            CenterTextX(this->loadingDetailText);
+        }
     }
 
     void remoteInstPage::setLoadingProgressStage(const std::string& stage)
     {
+        if (this->loadingStageLabel == stage)
+            return;
         this->loadingStageLabel = stage;
-        this->loadingStageIndex = this->mapLoadingStageToIndex(stage);
-        this->refreshLoadingStagesText();
+        this->loadingTransferDetail.clear();
+        if (this->loadingProgressText->IsVisible())
+            this->setLoadingProgress(this->loadingIndeterminate ? -1 : this->loadingPercent, true);
     }
 
     void remoteInstPage::setLoadingProgress(int percent, bool visible)
     {
+        this->loadingIndeterminate = percent < 0;
+        this->loadingPercent = std::clamp(percent, 0, 100);
         if (percent < 0)
             percent = 0;
         if (percent > 100)
             percent = 100;
 
+        // Cheats share the progress controls but keep their existing placement.
+        this->loadingProgressText->SetY(this->cheatInstallProgressVisible ? 504 : 320);
+        this->loadingBarBack->SetY(this->cheatInstallProgressVisible ? 540 : 386);
+        this->loadingBarFill->SetY(this->cheatInstallProgressVisible ? 540 : 386);
         this->loadingProgressText->SetVisible(visible);
         this->loadingBarBack->SetVisible(visible);
         this->loadingBarFill->SetVisible(visible);
         const bool showRemoteStages = visible && !this->cheatInstallProgressVisible;
         this->loadingStagesBack->SetVisible(showRemoteStages);
         this->loadingStagesText->SetVisible(showRemoteStages);
+        this->loadingDetailText->SetVisible(showRemoteStages);
         if (!visible) {
-            this->loadingStageIndex = -1;
-            this->loadingSpinnerFrame = 0;
-            this->loadingSpinnerLastTick = 0;
-            this->refreshLoadingStagesText();
+            this->loadingStartTick = 0;
+            this->loadingLastUpdateTick = 0;
+            this->loadingTransferDetail.clear();
             return;
         }
 
         std::string label = this->loadingStageLabel;
         if (label.empty())
             label = "inst.remote.loading"_lang;
-        this->loadingProgressText->SetText(label + " " + std::to_string(percent) + "%");
-        CenterTextX(this->loadingProgressText);
-        this->loadingBarFill->SetWidth((760 * percent) / 100);
+        // Percent is shown for explicit install progress only. Catalog requests
+        // can span multiple endpoints, so transfer percentages are not overall progress.
+        if (this->cheatInstallProgressVisible)
+            label += " " + std::to_string(percent) + "%";
+        if (this->loadingProgressText->GetText() != label) {
+            this->loadingProgressText->SetText(label);
+            CenterTextX(this->loadingProgressText);
+        }
+        if (this->loadingStartTick == 0)
+            this->loadingStartTick = armGetSystemTick();
+        this->loadingBarFill->SetX(260);
+        this->loadingBarFill->SetWidth(this->loadingIndeterminate ? 160 : (760 * percent) / 100);
         this->refreshLoadingStagesText();
+        this->updateLoadingActivity();
     }
 
     const char* remoteInstPage::getBrowseSortLabel() const
@@ -2220,7 +2218,7 @@ namespace inst::ui {
 
         const int previousSectionIndex = this->selectedSectionIndex;
         this->setLoadingProgressStage("Loading save sync list...");
-        this->setLoadingProgress(92, true);
+        this->setLoadingProgress(-1, true);
         mainApp->CallForRender();
         this->buildSaveSyncSection(this->activeRemoteUrl);
         this->saveSyncLoaded = true;
@@ -3796,8 +3794,9 @@ namespace inst::ui {
         this->pageInfoText->SetVisible(false);
         this->infoImage->SetX((1280 - this->infoImage->GetWidth()) / 2);
         this->infoImage->SetY(86);
+        this->setLoadingProgress(0, false);
         this->setLoadingProgressStage("Preparing Remote...");
-        this->setLoadingProgress(0, true);
+        this->setLoadingProgress(-1, true);
         mainApp->LoadLayout(mainApp->remoteinstPage);
         mainApp->CallForRender();
 
@@ -3837,17 +3836,10 @@ namespace inst::ui {
                     catch (...) { resolveError = "Unable to choose a Remote connection."; }
                     resolved.store(true, std::memory_order_release);
                 });
-                u64 lastTick = armGetSystemTick();
-                int frame = 0;
                 while (!resolved.load(std::memory_order_acquire)) {
-                    const u64 now = armGetSystemTick();
-                    if (now - lastTick >= (armGetSystemTickFreq() * 140) / 1000) {
-                        lastTick = now;
-                        static const char* frames[] = {"Choosing connection .", "Choosing connection ..", "Choosing connection ...", "Choosing connection"};
-                        this->setLoadingProgressStage(frames[frame++ % 4]);
-                    }
+                    this->updateLoadingActivity();
                     mainApp->CallForRender();
-                    svcSleepThread(16'000'000ULL);
+                    svcSleepThread(33'000'000ULL);
                 }
                 resolver.join();
                 if (!resolveError.empty() || selected.empty()) {
@@ -3871,20 +3863,21 @@ namespace inst::ui {
         bool usedLegacyFallback = false;
         int loadingPercent = 5;
         auto updateLoadingProgress = [&](int percent, const char* stage = nullptr, bool forceRender = false) {
+            const bool stageChanged = stage != nullptr && this->loadingStageLabel != stage;
             if (stage != nullptr)
                 this->setLoadingProgressStage(stage);
             if (percent > 100)
                 percent = 100;
             if (percent < loadingPercent)
                 return;
-            if (!forceRender && percent == loadingPercent)
+            if (!forceRender && !stageChanged && percent == loadingPercent)
                 return;
             loadingPercent = percent;
-            this->setLoadingProgress(loadingPercent, true);
+            this->setLoadingProgress(-1, true);
             mainApp->CallForRender();
         };
         this->setLoadingProgressStage("Fetching Remote list...");
-        this->setLoadingProgress(loadingPercent, true);
+        this->setLoadingProgress(-1, true);
         mainApp->CallForRender();
 
         const std::string cacheKey = remoteUrl + "\n" + inst::config::remoteUser + "\n" + inst::config::remotePass + "\n" + (inst::config::remoteLegacyMode ? "1" : "0");
@@ -3922,65 +3915,23 @@ namespace inst::ui {
                 fetchDone.store(true, std::memory_order_release);
             });
 
-            const u64 spinnerStepTicks = (armGetSystemTickFreq() * 140) / 1000;
             while (!fetchDone.load(std::memory_order_acquire)) {
-                const u64 now = armGetSystemTick();
                 const std::uint64_t downloaded = fetchDownloaded.load(std::memory_order_relaxed);
                 const std::uint64_t total = fetchTotal.load(std::memory_order_relaxed);
-
-                int mappedPercent = loadingPercent;
-                const char* stageLabel = "Fetching Remote list...";
-                if (total > 0) {
-                    int fetchPercent = static_cast<int>((downloaded * 100ULL) / total);
-                    if (fetchPercent > 100)
-                        fetchPercent = 100;
-
-                    // Keep room for post-download parsing/preparation.
-                    mappedPercent = 5 + ((fetchPercent * 84) / 100); // 5..89
-                    if (fetchPercent >= 96)
-                        stageLabel = "Finishing catalog transfer...";
-                } else {
-                    // Some servers do not provide content-length; map received bytes to coarse milestones.
-                    if (downloaded >= (64ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 10);
-                    if (downloaded >= (256ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 16);
-                    if (downloaded >= (768ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 24);
-                    if (downloaded >= (2ULL * 1024ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 34);
-                    if (downloaded >= (4ULL * 1024ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 45);
-                    if (downloaded >= (8ULL * 1024ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 57);
-                    if (downloaded >= (12ULL * 1024ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 68);
-                    if (downloaded >= (16ULL * 1024ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 78);
-                    if (downloaded >= (24ULL * 1024ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 86);
-                    if (downloaded >= (32ULL * 1024ULL * 1024ULL))
-                        mappedPercent = std::max(mappedPercent, 89);
-                    if (downloaded >= (24ULL * 1024ULL * 1024ULL))
-                        stageLabel = "Finishing catalog transfer...";
-                }
-
-                const bool progressAdvanced = (mappedPercent > loadingPercent);
-                const bool stageChanged = (this->loadingStageLabel != stageLabel);
-                if (progressAdvanced || stageChanged) {
-                    updateLoadingProgress(mappedPercent, stageLabel, progressAdvanced);
-                } else {
-                    if (this->loadingSpinnerLastTick == 0)
-                        this->loadingSpinnerLastTick = now;
-                    if (now - this->loadingSpinnerLastTick >= spinnerStepTicks) {
-                        this->loadingSpinnerLastTick = now;
-                        this->loadingSpinnerFrame = (this->loadingSpinnerFrame + 1) % 4;
-                        this->refreshLoadingStagesText();
-                        mainApp->CallForRender();
-                    }
-                }
-
-                svcSleepThread(16'000'000ULL);
+                // Show the actual request's progress. Unknown lengths use a
+                // moving bar instead of guessing completion from received bytes.
+                const int requestPercent = total > 0 && downloaded < total
+                    ? static_cast<int>(std::min(1.0, static_cast<double>(downloaded) / total) * 100.0)
+                    : -1;
+                const char* stage = total > 0 && downloaded >= total
+                    ? "Preparing catalog..." : "Fetching Remote list...";
+                this->setLoadingProgressStage(stage);
+                if (this->loadingIndeterminate != (requestPercent < 0)
+                    || (requestPercent >= 0 && requestPercent != this->loadingPercent))
+                    this->setLoadingProgress(requestPercent, true);
+                this->updateLoadingActivity(downloaded, total, true);
+                mainApp->CallForRender();
+                svcSleepThread(33'000'000ULL);
             }
 
             if (fetchThread.joinable())
@@ -3997,7 +3948,7 @@ namespace inst::ui {
                 this->catalogCacheSections = this->remoteSections;
             }
         }
-        updateLoadingProgress(90, "Parsing Remote response...");
+        updateLoadingProgress(90, "Preparing Remote library...");
         this->saveSyncEnabled = !usedLegacyFallback && !inst::config::remoteLegacyMode;
         RemoteDlcTrace("FetchRemoteSections done sections=%llu errorLen=%llu", static_cast<unsigned long long>(this->remoteSections.size()), static_cast<unsigned long long>(error.size()));
         RemoteDlcTrace(
@@ -4448,6 +4399,10 @@ namespace inst::ui {
     }
 
     void remoteInstPage::onInput(u64 Down, u64 Up, u64 Held, pu::ui::Touch Pos) {
+        // Loading renders pump input too. Do not let browser shortcuts start
+        // another operation while the catalog or save list is being replaced.
+        if (this->loadingProgressText->IsVisible())
+            return;
         int bottomTapX = 0;
         if (DetectBottomHintTap(Pos, this->bottomHintTouch, 668, 52, bottomTapX)) {
             Down |= FindBottomHintButton(this->bottomHintSegments, bottomTapX);
