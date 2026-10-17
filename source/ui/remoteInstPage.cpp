@@ -5066,29 +5066,41 @@ namespace inst::ui {
                 const bool dpadDown = (Held & HidNpadButton_Down) != 0;
                 const bool dpadLeft = (Held & HidNpadButton_Left) != 0;
                 const bool dpadRight = (Held & HidNpadButton_Right) != 0;
-                const bool stickUp = (Held & (HidNpadButton_StickLUp | HidNpadButton_StickRUp)) != 0;
-                const bool stickDown = (Held & (HidNpadButton_StickLDown | HidNpadButton_StickRDown)) != 0;
-                const bool stickLeft = (Held & (HidNpadButton_StickLLeft | HidNpadButton_StickRLeft)) != 0;
-                const bool stickRight = (Held & (HidNpadButton_StickLRight | HidNpadButton_StickRRight)) != 0;
-                const bool heldUp = dpadUp || stickUp;
-                const bool heldDown = dpadDown || stickDown;
-                const bool heldLeft = dpadLeft || stickLeft;
-                const bool heldRight = dpadRight || stickRight;
-                if (!heldUp && !heldDown && !heldLeft && !heldRight) {
+                const bool fromStick = !dpadUp && !dpadDown && !dpadLeft && !dpadRight;
+                int dirX = dpadRight ? 1 : (dpadLeft ? -1 : 0);
+                int dirY = dpadDown ? 1 : (dpadUp ? -1 : 0);
+                if (fromStick) {
+                    const auto left = mainApp->GetAnalogStick(0);
+                    const auto right = mainApp->GetAnalogStick(1);
+                    const auto strength = [](const HidAnalogStickState& stick) { return std::max(std::abs(stick.x), std::abs(stick.y)); };
+                    const auto stick = strength(left) >= strength(right) ? left : right;
+                    const int x = std::abs(stick.x), y = std::abs(stick.y);
+                    // Engage deliberately; a lower release threshold prevents jitter around the dead zone.
+                    const int threshold = JOYSTICK_MAX * (this->gridHoldFromStick && this->gridHoldStartTick != 0 ? 40 : 55) / 100;
+                    if (std::max(x, y) >= threshold) {
+                        bool horizontal = x > y;
+                        // Keep the current axis near diagonals instead of generating repeated new presses.
+                        if (this->gridHoldFromStick && this->gridHoldDirX != 0 && x * 5 >= y * 4) horizontal = true;
+                        else if (this->gridHoldFromStick && this->gridHoldDirY != 0 && y * 5 >= x * 4) horizontal = false;
+                        if (horizontal) dirX = stick.x > 0 ? 1 : -1;
+                        else dirY = stick.y > 0 ? -1 : 1;
+                    }
+                }
+                if (dirX == 0 && dirY == 0) {
                     this->gridHoldDirX = 0;
                     this->gridHoldDirY = 0;
+                    this->gridHoldFromStick = false;
                     this->gridHoldStartTick = 0;
                     this->gridHoldLastTick = 0;
                 } else {
-                    int dirX = heldRight ? 1 : (heldLeft ? -1 : 0);
-                    int dirY = heldDown ? 1 : (heldUp ? -1 : 0);
                     u64 now = armGetSystemTick();
-                    if (this->gridHoldDirX != dirX || this->gridHoldDirY != dirY || this->gridHoldStartTick == 0) {
+                    if (this->gridHoldDirX != dirX || this->gridHoldDirY != dirY || this->gridHoldFromStick != fromStick || this->gridHoldStartTick == 0) {
                         this->gridHoldDirX = dirX;
                         this->gridHoldDirY = dirY;
+                        this->gridHoldFromStick = fromStick;
                         this->gridHoldStartTick = now;
                         this->gridHoldLastTick = now;
-                        if (!dpadUp && !dpadDown && !dpadLeft && !dpadRight) {
+                        if (fromStick) {
                             if (dirY != 0)
                                 dirKeys |= (dirY > 0) ? HidNpadButton_Down : HidNpadButton_Up;
                             else if (dirX != 0)
@@ -5096,8 +5108,8 @@ namespace inst::ui {
                         }
                     } else {
                         const u64 freq = armGetSystemTickFreq();
-                        const u64 delayTicks = (freq * 200) / 1000;
-                        const u64 repeatTicks = (freq * 90) / 1000;
+                        const u64 delayTicks = (freq * (fromStick ? 350 : 200)) / 1000;
+                        const u64 repeatTicks = (freq * (fromStick ? 140 : 90)) / 1000;
                         if (now - this->gridHoldStartTick >= delayTicks && now - this->gridHoldLastTick >= repeatTicks) {
                             if (dirY != 0)
                                 dirKeys |= (dirY > 0) ? HidNpadButton_Down : HidNpadButton_Up;
@@ -5107,6 +5119,10 @@ namespace inst::ui {
                         }
                     }
                 }
+            } else {
+                this->gridHoldFromStick = false;
+                this->gridHoldStartTick = 0;
+                this->gridHoldLastTick = 0;
             }
             if ((Down & HidNpadButton_A) || (Up & TouchPseudoKey)) {
                 if (!this->visibleItems.empty()) {

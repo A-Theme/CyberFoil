@@ -197,6 +197,7 @@ namespace inst::ui {
             int remoteGridPage = -1;
             int gridHoldDirX = 0;
             int gridHoldDirY = 0;
+            bool gridHoldFromStick = false;
             u64 gridHoldStartTick = 0;
             u64 gridHoldLastTick = 0;
             int holdDirection = 0;
