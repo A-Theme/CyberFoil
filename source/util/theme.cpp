@@ -202,6 +202,20 @@ namespace inst::theme {
         SetScrollbarColor(inst::theme::Color("scrollbar", GetScrollbarColor()));
     }
 
+    void Menu::OnInput(u64 down, u64 up, u64 held, pu::ui::Touch pos) {
+        // Plutonium delays right-stick movement even on its first press.
+        // Route directions through the left-stick path for identical behavior.
+        const auto normalizeStick = [](u64 buttons) {
+            if (buttons & HidNpadButton_StickRUp) buttons |= HidNpadButton_StickLUp;
+            if (buttons & HidNpadButton_StickRDown) buttons |= HidNpadButton_StickLDown;
+            if (buttons & HidNpadButton_StickRLeft) buttons |= HidNpadButton_StickLLeft;
+            if (buttons & HidNpadButton_StickRRight) buttons |= HidNpadButton_StickLRight;
+            return buttons & ~(HidNpadButton_StickRUp | HidNpadButton_StickRDown |
+                HidNpadButton_StickRLeft | HidNpadButton_StickRRight);
+        };
+        pu::ui::elm::Menu::OnInput(normalizeStick(down), normalizeStick(up), normalizeStick(held), pos);
+    }
+
     void Menu::OnRender(pu::ui::render::Renderer::Ref& drawer, s32 x, s32 y) {
         if (HasColor("selected_text")) {
             const auto index = GetSelectedIndex();

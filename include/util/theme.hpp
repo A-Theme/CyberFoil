@@ -26,6 +26,7 @@ namespace inst::theme {
         Menu(s32 x, s32 y, s32 width, pu::ui::Color optionColor, s32 itemSize, s32 itemsToShow, s32 fontSize = 25);
         PU_SMART_CTOR(Menu)
         void OnRender(pu::ui::render::Renderer::Ref& drawer, s32 x, s32 y) override;
+        void OnInput(u64 down, u64 up, u64 held, pu::ui::Touch pos) override;
     private:
         std::weak_ptr<pu::ui::elm::MenuItem> focusedItem;
         pu::ui::Color originalColor;

@@ -4415,9 +4415,9 @@ namespace inst::ui {
             }
 
             int delta = 0;
-            if (Down & (HidNpadButton_Up | HidNpadButton_StickLUp))
+            if (Down & (HidNpadButton_Up | HidNpadButton_StickLUp | HidNpadButton_StickRUp))
                 delta = -1;
-            else if (Down & (HidNpadButton_Down | HidNpadButton_StickLDown))
+            else if (Down & (HidNpadButton_Down | HidNpadButton_StickLDown | HidNpadButton_StickRDown))
                 delta = 1;
             else if (Down & HidNpadButton_Left)
                 delta = -(this->descriptionOverlayVisibleLines / 2);
@@ -4620,10 +4620,10 @@ namespace inst::ui {
                 const bool dpadDown = (Held & HidNpadButton_Down) != 0;
                 const bool dpadLeft = (Held & HidNpadButton_Left) != 0;
                 const bool dpadRight = (Held & HidNpadButton_Right) != 0;
-                const bool stickUp = (Held & HidNpadButton_StickLUp) != 0;
-                const bool stickDown = (Held & HidNpadButton_StickLDown) != 0;
-                const bool stickLeft = (Held & HidNpadButton_StickLLeft) != 0;
-                const bool stickRight = (Held & HidNpadButton_StickLRight) != 0;
+                const bool stickUp = (Held & (HidNpadButton_StickLUp | HidNpadButton_StickRUp)) != 0;
+                const bool stickDown = (Held & (HidNpadButton_StickLDown | HidNpadButton_StickRDown)) != 0;
+                const bool stickLeft = (Held & (HidNpadButton_StickLLeft | HidNpadButton_StickRLeft)) != 0;
+                const bool stickRight = (Held & (HidNpadButton_StickLRight | HidNpadButton_StickRRight)) != 0;
                 const bool heldUp = dpadUp || stickUp;
                 const bool heldDown = dpadDown || stickDown;
                 const bool heldLeft = dpadLeft || stickLeft;
@@ -4849,9 +4849,9 @@ namespace inst::ui {
             }
         }
         if (!this->remoteGridMode && !this->menu->GetItems().empty()) {
-            const u64 holdMask = HidNpadButton_Up | HidNpadButton_Down | HidNpadButton_StickLUp | HidNpadButton_StickLDown;
-            const bool heldUp = (Held & (HidNpadButton_Up | HidNpadButton_StickLUp)) != 0;
-            const bool heldDown = (Held & (HidNpadButton_Down | HidNpadButton_StickLDown)) != 0;
+            const u64 holdMask = HidNpadButton_Up | HidNpadButton_Down | HidNpadButton_StickLUp | HidNpadButton_StickRUp | HidNpadButton_StickLDown | HidNpadButton_StickRDown;
+            const bool heldUp = (Held & (HidNpadButton_Up | HidNpadButton_StickLUp | HidNpadButton_StickRUp)) != 0;
+            const bool heldDown = (Held & (HidNpadButton_Down | HidNpadButton_StickLDown | HidNpadButton_StickRDown)) != 0;
             const bool isHolding = (Held & holdMask) != 0;
             if (!isHolding || (heldUp && heldDown)) {
                 this->holdDirection = 0;
