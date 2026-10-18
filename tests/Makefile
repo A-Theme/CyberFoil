@@ -13,3 +13,7 @@ test:
 	$(OUT)
 	$(CXX) $(CXXFLAGS) -DAPP_VERSION=\"test\" -I$(ROOT)/include remote_connection_tests.cpp $(ROOT)/source/util/config.cpp -o $(OUT)-remote
 	$(OUT)-remote
+	@# The theme loader needs host SDL2 and SDL2_image; skip rather than fail without them.
+	@if pkg-config --exists sdl2 SDL2_image; then \
+		$(CXX) $(CXXFLAGS) -Itheme_stubs -I$(ROOT)/include theme_tests.cpp -o $(OUT)-theme $$(pkg-config --cflags --libs sdl2 SDL2_image) && $(OUT)-theme; \
+	else echo "theme tests skipped: install SDL2 and SDL2_image development packages"; fi
