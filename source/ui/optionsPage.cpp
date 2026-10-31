@@ -1187,10 +1187,10 @@ namespace inst::ui {
             }
             mainApp->LoadLayout(mainApp->mainPage);
         }
-        const bool leftPressed = (Down & (HidNpadButton_Left | HidNpadButton_StickLLeft)) != 0;
-        const bool rightPressed = (Down & (HidNpadButton_Right | HidNpadButton_StickLRight)) != 0;
-        const bool upPressed = (Down & (HidNpadButton_Up | HidNpadButton_StickLUp)) != 0;
-        const bool downPressed = (Down & (HidNpadButton_Down | HidNpadButton_StickLDown)) != 0;
+        const bool leftPressed = (Down & (HidNpadButton_Left | HidNpadButton_StickLLeft | HidNpadButton_StickRLeft)) != 0;
+        const bool rightPressed = (Down & (HidNpadButton_Right | HidNpadButton_StickLRight | HidNpadButton_StickRRight)) != 0;
+        const bool upPressed = (Down & (HidNpadButton_Up | HidNpadButton_StickLUp | HidNpadButton_StickRUp)) != 0;
+        const bool downPressed = (Down & (HidNpadButton_Down | HidNpadButton_StickLDown | HidNpadButton_StickRDown)) != 0;
 
         if (!this->remoteListVisible && leftPressed && !this->tabsFocused) {
             this->tabsFocused = true;

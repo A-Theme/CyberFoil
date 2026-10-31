@@ -594,6 +594,16 @@ namespace inst::ui {
         }
         int tap = 0;
         if (DetectBottomHintTap(Pos, bottomHintTouch, 668, 52, tap)) Down |= FindBottomHintButton(bottomHintSegments, tap);
+        // Use the same queue movement and repeat timing for all directional controls.
+        const auto queueDirections = [](u64 buttons) {
+            if (buttons & (HidNpadButton_StickLUp | HidNpadButton_StickRUp)) buttons |= HidNpadButton_Up;
+            if (buttons & (HidNpadButton_StickLDown | HidNpadButton_StickRDown)) buttons |= HidNpadButton_Down;
+            if (buttons & (HidNpadButton_StickLLeft | HidNpadButton_StickRLeft)) buttons |= HidNpadButton_Left;
+            if (buttons & (HidNpadButton_StickLRight | HidNpadButton_StickRRight)) buttons |= HidNpadButton_Right;
+            return buttons;
+        };
+        Down = queueDirections(Down);
+        Held = queueDirections(Held);
         const u64 directions = HidNpadButton_Up | HidNpadButton_Down | HidNpadButton_Left | HidNpadButton_Right;
         const u64 held = installActive ? Held & directions : 0, now = armGetSystemTick(), frequency = armGetSystemTickFreq();
         if (held != queueHeldDirection) { queueHeldDirection = held; queueRepeatAt = now + frequency * 35 / 100; }

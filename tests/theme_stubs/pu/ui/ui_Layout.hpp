@@ -13,12 +13,24 @@ using u8 = std::uint8_t;
 using s32 = std::int32_t;
 using u64 = std::uint64_t;
 
+enum : u64 {
+    HidNpadButton_StickLUp = 1ULL << 16,
+    HidNpadButton_StickLDown = 1ULL << 17,
+    HidNpadButton_StickLLeft = 1ULL << 18,
+    HidNpadButton_StickLRight = 1ULL << 19,
+    HidNpadButton_StickRUp = 1ULL << 20,
+    HidNpadButton_StickRDown = 1ULL << 21,
+    HidNpadButton_StickRLeft = 1ULL << 22,
+    HidNpadButton_StickRRight = 1ULL << 23
+};
+
 #define PU_SMART_CTOR(type) \
     using Ref = std::shared_ptr<type>; \
     template<typename ...Args> \
     static Ref New(Args &&...CtorArgs) { return std::make_shared<type>(std::forward<Args>(CtorArgs)...); }
 
 namespace pu::ui {
+    struct Touch { s32 X = 0, Y = 0; };
     struct Color {
         u8 R = 0, G = 0, B = 0, A = 255;
         Color() = default;

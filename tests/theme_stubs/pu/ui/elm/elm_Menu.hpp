@@ -14,7 +14,7 @@ namespace pu::ui::elm {
 
     class Menu {
     public:
-        Menu(s32, s32, s32, Color, s32, s32, s32 = 25) {}
+        Menu(s32, s32, s32, Color, s32, s32 rows, s32 = 25) : rows(rows) {}
         virtual ~Menu() = default;
         Color GetOnFocusColor() { return fcs; }
         void SetOnFocusColor(Color c) { fcs = c; }
@@ -23,6 +23,8 @@ namespace pu::ui::elm {
         std::vector<MenuItem::Ref>& GetItems() { return itms; }
         s32 GetSelectedIndex() { return isel; }
         void SetSelectedIndex(s32 i) { isel = i; }
+        s32 GetNumberOfItemsToShow() { return rows; }
+        virtual void OnInput(u64, u64, u64, Touch) {}
         virtual void OnRender(render::Renderer::Ref&, s32, s32) {}
     private:
         // Plutonium's constructor defaults (elm_Menu.cpp).
@@ -30,5 +32,6 @@ namespace pu::ui::elm {
         Color scb{110, 110, 110, 255};
         std::vector<MenuItem::Ref> itms;
         s32 isel = 0;
+        s32 rows;
     };
 }

@@ -880,25 +880,25 @@ namespace inst::ui {
         if (Down & HidNpadButton_Y) {
             this->showSelectedMainInfo();
         }
-        if (Down & (HidNpadButton_Left | HidNpadButton_StickLLeft)) {
+        if (Down & (HidNpadButton_Left | HidNpadButton_StickLLeft | HidNpadButton_StickRLeft)) {
             if ((this->selectedMainIndex % kMainGridCols) > 0) {
                 this->selectedMainIndex--;
                 this->updateMainGridSelection();
             }
         }
-        if (Down & (HidNpadButton_Right | HidNpadButton_StickLRight)) {
+        if (Down & (HidNpadButton_Right | HidNpadButton_StickLRight | HidNpadButton_StickRRight)) {
             if ((this->selectedMainIndex % kMainGridCols) < (kMainGridCols - 1) && this->selectedMainIndex < ((kMainGridCols * kMainGridRows) - 1)) {
                 this->selectedMainIndex++;
                 this->updateMainGridSelection();
             }
         }
-        if (Down & (HidNpadButton_Up | HidNpadButton_StickLUp)) {
+        if (Down & (HidNpadButton_Up | HidNpadButton_StickLUp | HidNpadButton_StickRUp)) {
             if (this->selectedMainIndex >= kMainGridCols) {
                 this->selectedMainIndex -= kMainGridCols;
                 this->updateMainGridSelection();
             }
         }
-        if (Down & (HidNpadButton_Down | HidNpadButton_StickLDown)) {
+        if (Down & (HidNpadButton_Down | HidNpadButton_StickLDown | HidNpadButton_StickRDown)) {
             if (this->selectedMainIndex + kMainGridCols < (kMainGridCols * kMainGridRows)) {
                 this->selectedMainIndex += kMainGridCols;
                 this->updateMainGridSelection();
