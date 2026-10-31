@@ -2,6 +2,7 @@
 // SDL2_image so the background scaling and dim run on real pixels. Plutonium
 // and libnx are replaced by the small stubs in theme_stubs/.
 #include "../source/util/theme.cpp"
+#include "util/file_selection.hpp"
 
 #include <SDL2/SDL.h>
 #include <cstdio>
@@ -68,6 +69,26 @@ int main() {
     CHECK(Asset("romfs:/images/icons/folder.png") == "romfs:/images/icons/folder.png");
     CHECK(!HasImage("romfs:/images/icons/folder.png"));
     CHECK(fs::exists(fs::path(__FILE__).parent_path() / ".." / "romfs" / "images" / "blank.png"));
+
+    // Identical hidden icons must not make folders or unchecked files look selected
+    // to the browser controls. Selection is based on row identity and file state.
+    writeTheme(R"({"images":{"icons/check-box-outline.png":"","icons/checkbox-blank-outline.png":"","icons/folder.png":""}})");
+    Load(g_app.string(), "t/theme.json");
+    CHECK(Asset("romfs:/images/icons/check-box-outline.png") == Asset("romfs:/images/icons/checkbox-blank-outline.png"));
+    CHECK(Asset("romfs:/images/icons/folder.png") == Asset("romfs:/images/icons/check-box-outline.png"));
+    {
+        const std::vector<std::string> files{"first.nsp", "second.nsp"};
+        std::vector<std::string> selected;
+        CHECK(!inst::util::FileRowIndex(0, 1, files.size()));
+        const auto first = inst::util::FileRowIndex(1, 1, files.size());
+        CHECK(first.has_value());
+        if (first) {
+            inst::util::ToggleFileSelection(selected, files[*first]);
+            CHECK(selected == std::vector<std::string>{"first.nsp"});
+            inst::util::ToggleFileSelection(selected, files[*first]);
+            CHECK(selected.empty());
+        }
+    }
 
     // ---- a 1920x1080 wallpaper is scaled to the screen ----
     writePng("wide.png", 1920, 1080, [](int x, int) { return x < 960 ? 0xFF0000FFu : 0x0000FFFFu; });
