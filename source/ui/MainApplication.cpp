@@ -133,11 +133,66 @@ namespace inst::ui {
         }
     }
 
+    MainApplication::~MainApplication() {
+        this->StopThemeRefresh();
+    }
+
+    void MainApplication::StartThemeRefresh() {
+        this->StopThemeRefresh();
+        this->themeRefreshDone.store(true);
+        auto images = inst::theme::RemoteImages();
+        if (images.empty()) return;
+        // The same offline test main() uses before its own network threads:
+        // without it every launch would sit out the download timeouts.
+        if (inst::util::getIPAddress() == "1.0.0.127") return;
+        this->themeRefreshStop.store(false);
+        this->themeRefreshDone.store(false);
+        const unsigned generation = inst::theme::Generation();
+        this->themeRefreshThread = std::thread([this, generation, images = std::move(images)]() {
+            const auto arrived = inst::theme::RefreshRemoteImages(images, this->themeRefreshStop);
+            std::vector<inst::theme::RemoteDownload> first;
+            for (const auto& image : arrived) if (!image.cached) first.push_back(image);
+            // A first download is shown now; a refresh of one already in use
+            // waits for the next launch. Posted, never invoked: the UI thread
+            // joins this worker, so waiting on it here could deadlock.
+            if (!first.empty() && !this->themeRefreshStop.load()) {
+                this->uiDispatcher.postLatest("theme-remote-images", [this, generation, first]() {
+                    if (inst::theme::AdoptDownloaded(generation, first) && inst::theme::BackgroundAdopted(first))
+                        this->ReapplyBackgrounds();
+                });
+            }
+            this->themeRefreshDone.store(true);
+        });
+    }
+
+    void MainApplication::ReapplyBackgrounds() {
+        // Every layout set its wallpaper when it was built; set it again. The
+        // logo is built into each page, so a web logo appears next launch.
+        const auto apply = [](pu::ui::Layout* layout) {
+            if (layout) inst::theme::ApplyBackground(*layout, inst::config::oledMode, inst::config::appDir);
+        };
+        apply(this->mainPage.get());
+        apply(this->netinstPage.get());
+        apply(this->remoteinstPage.get());
+        apply(this->sdinstPage.get());
+        apply(this->usbinstPage.get());
+        apply(this->hddinstPage.get());
+        apply(this->instpage.get());
+        apply(this->optionspage.get());
+    }
+
+    void MainApplication::StopThemeRefresh() {
+        this->themeRefreshStop.store(true);
+        // Waits out at most the download in flight (remote::kDownloadTimeoutMs).
+        if (this->themeRefreshThread.joinable()) this->themeRefreshThread.join();
+    }
+
     void MainApplication::Close() {
         if (IsInstallWorkActive()) {
             instPage::requestInstallCancel();
             return; // Renderer and services must outlive the installation worker.
         }
+        this->StopThemeRefresh();
         if (this->optionspage)
             this->optionspage->stopDiscoveryWorker();
         if (this->remoteinstPage)
@@ -255,7 +310,18 @@ namespace inst::ui {
         if (this->themeReloadStage == 0) {
             if (this->optionspage) this->optionspage->stopDiscoveryWorker();
             if (this->remoteinstPage) this->remoteinstPage->stopIconDownloadWorker();
+            this->StopThemeRefresh();
             inst::theme::Load(inst::config::appDir, inst::config::themeFile);
+            this->StartThemeRefresh();
+            // A theme picked for the first time opens with its web wallpaper:
+            // hold here, spinner running, until the first downloads land.
+            this->themeAwaitDownloads = false;
+            for (const auto& image : inst::theme::RemoteImages())
+                if (!image.cached && image.key == "background.jpg") this->themeAwaitDownloads = !this->themeRefreshDone.load();
+            this->themeAwaitDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        } else if (this->themeReloadStage == 1 && this->themeAwaitDownloads &&
+                   !this->themeRefreshDone.load() && std::chrono::steady_clock::now() < this->themeAwaitDeadline) {
+            return; // The posted adoption runs in uiDispatcher.drain() just before this.
         } else if (this->themeReloadStage <= 8) {
             // Create one layout per frame so the spinner can animate between stages.
             this->CreateLayoutStep(this->themeReloadStage - 1);
@@ -278,6 +344,7 @@ namespace inst::ui {
 
         Language::Load();
         inst::theme::Load(inst::config::appDir, inst::config::themeFile);
+        this->StartThemeRefresh();
 
         this->RecreateLayouts();
         this->LoadLayout(this->mainPage);

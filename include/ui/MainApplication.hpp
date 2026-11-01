@@ -2,6 +2,8 @@
 #include <pu/Plutonium>
 #include <switch.h>
 #include <atomic>
+#include <chrono>
+#include <thread>
 #include <vector>
 #include "util/ui_dispatcher.hpp"
 #include "ui/mainPage.hpp"
@@ -21,6 +23,7 @@ namespace inst::ui {
         public:
             using Application::Application;
             PU_SMART_CTOR(MainApplication)
+            ~MainApplication();
             void Close();
             void OnLoad() override;
             void RefreshInputDevice(bool force = false);
@@ -54,6 +57,18 @@ namespace inst::ui {
             void CreateLayoutStep(int step);
             void ShowThemeLoading();
             void ApplyPendingTheme();
+            // Fetches the theme's web images for the next launch. Started after
+            // every theme load; stopped before the next one and on exit.
+            std::thread themeRefreshThread;
+            std::atomic<bool> themeRefreshStop{false};
+            std::atomic<bool> themeRefreshDone{true};
+            // "Applying theme..." holds until a theme's first web downloads land,
+            // or this deadline passes, so a newly picked theme opens with them.
+            bool themeAwaitDownloads = false;
+            std::chrono::steady_clock::time_point themeAwaitDeadline;
+            void StartThemeRefresh();
+            void StopThemeRefresh();
+            void ReapplyBackgrounds();
             AppletFocusState lastFocusState = AppletFocusState_InFocus;
     };
 }

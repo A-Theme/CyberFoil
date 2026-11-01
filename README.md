@@ -126,6 +126,21 @@ Image paths are relative to the selected JSON file's directory; use forward slas
 
 Use a **1280×720** background and a **480×93** banner (the banner is fitted into that existing space). PNG, JPEG, and WebP work through the bundled image decoder. Assets must be valid, no larger than 16 MiB each, and no larger than 4096 pixels on either side. An empty background path (`"background": ""`) disables background images. Custom background settings override OLED mode's default background; omitted settings keep the current OLED/default appearance and legacy `background.png` behavior.
 
+### Web images
+
+A theme can also name images on the web, beside its bundled ones:
+
+```json
+"images":        { "background": "background.jpg" },
+"remote_images": { "background": "https://example.com/random-wallpaper.jpg" }
+```
+
+This is for servers that answer with a different picture each time, as many Tinfoil themes' wallpapers do: the image changes from one launch to the next. Launching never waits on the network for it. Loading a theme uses the picture the **previous** launch downloaded, and a background download fetches a fresh one for the next launch, so the wallpaper does not change mid-session. Nothing is fetched while the console is offline.
+
+The first time, there is no previous download to show. Selecting the theme in **Settings > System > Theme** then holds the **Applying theme…** screen until the web wallpaper arrives (at most ten seconds), so the theme opens with it. At launch, a web wallpaper with no downloaded copy yet shows the bundled image, or the background colour, until the download lands a moment later, then switches to it. A web logo or icon appears from the next launch.
+
+Keys are the same as in `images` (`background`, `logo`, or a `romfs/images/` path), up to eight of them, and the address must be `http://` or `https://`. A download replaces the cached picture only once it has arrived in full and decodes within the same 16 MiB and 4096-pixel limits; a failed or garbage response keeps the previous one. Downloads are cached in a `.web` folder beside the theme JSON, and each is limited to eight seconds. Builds without web image support ignore `remote_images` and show the bundled image, so keep one in `images` as the fallback.
+
 Missing or corrupt images and invalid individual colors fall back to the existing assets/colors. Malformed JSON or an unsupported schema version restores the default theme. The JSON file is limited to 256 KiB. Removing the theme never removes user assets.
 
 ## Remote Configuration

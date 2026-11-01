@@ -13,3 +13,5 @@ test:
 	$(OUT)
 	$(CXX) $(CXXFLAGS) -DAPP_VERSION=\"test\" -I$(ROOT)/include remote_connection_tests.cpp $(ROOT)/source/util/config.cpp -o $(OUT)-remote
 	$(OUT)-remote
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/include theme_remote_tests.cpp $(ROOT)/source/util/theme_remote.cpp -o $(OUT)-theme-remote
+	$(OUT)-theme-remote
