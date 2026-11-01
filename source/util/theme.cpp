@@ -6,8 +6,10 @@
 #include <fstream>
 #include <unordered_map>
 #include <SDL2/SDL_image.h>
+#include "util/curl.hpp"
 #include "util/error.hpp"
 #include "util/json.hpp"
+#include "util/theme_remote.hpp"
 
 namespace inst::theme {
     namespace {
@@ -16,6 +18,7 @@ namespace inst::theme {
         std::unordered_map<std::string, std::string> g_images;
         std::string g_name = "Default";
         bool g_noBackgroundImage = false;
+        std::vector<RemoteDownload> g_remote;   // what RefreshRemoteImages fetches for next launch
 
         bool ValidManifestPath(const std::string& file) {
             if (file.empty() || file.find(':') != std::string::npos || file.find('\\') != std::string::npos) return false;
@@ -115,6 +118,7 @@ namespace inst::theme {
     void Load(const std::string& appDir, const std::string& selectedFile) {
         g_colors.clear();
         g_images.clear();
+        g_remote.clear();
         g_name = "Default";
         g_noBackgroundImage = false;
         if (!ValidManifestPath(selectedFile)) return;
@@ -146,13 +150,58 @@ namespace inst::theme {
                     else LOG_DEBUG("Theme: ignored invalid image %s\n", relative.c_str());
                 }
             }
+            // Web images: last launch's download wins over the bundled file. Only
+            // the card is read here - the network is the refresh worker's job, so
+            // loading a theme never waits on it.
+            for (const auto& remote : inst::theme::remote::Parse(root)) {
+                const auto cached = ValidImage(directory, remote.cache);
+                if (!cached.empty()) {
+                    g_images[remote.key] = cached;
+                    if (remote.key == "background.jpg") g_noBackgroundImage = false;
+                }
+                g_remote.push_back({remote.url, (directory / remote.cache).string()});
+            }
             g_name = ManifestName(root, manifest.stem().string());
         } catch (...) {
             g_colors.clear();
             g_images.clear();
+            g_remote.clear();
             g_noBackgroundImage = false;
             g_name = "Default";
             LOG_DEBUG("Theme: could not load theme.json, using defaults\n");
+        }
+    }
+
+    std::vector<RemoteDownload> RemoteImages() { return g_remote; }
+
+    void RefreshRemoteImages(const std::vector<RemoteDownload>& images, const std::atomic<bool>& stop) {
+        for (const auto& image : images) {
+            if (stop.load()) return;
+            std::error_code error;
+            const std::filesystem::path target(image.path);
+            std::filesystem::create_directories(target.parent_path(), error);
+            const auto part = image.path + ".part";
+            // Downloaded beside the cache, and only swapped in once it is known
+            // to be a picture: a failed or garbage response must not replace the
+            // image the next launch would otherwise show.
+            if (!inst::curl::downloadFile(image.url, part.c_str(), inst::theme::remote::kDownloadTimeoutMs)) continue;
+            const auto size = std::filesystem::file_size(part, error);
+            bool valid = !error && size > 0 && size <= inst::theme::remote::kMaxImageBytes;
+            if (valid) {
+                // A surface, not a texture: decoding here touches no renderer.
+                SDL_Surface* decoded = IMG_Load(part.c_str());
+                valid = decoded && decoded->w > 0 && decoded->h > 0 && decoded->w <= 4096 && decoded->h <= 4096;
+                if (decoded) SDL_FreeSurface(decoded);
+            }
+            if (!valid) {
+                std::filesystem::remove(part, error);
+                LOG_DEBUG("Theme: discarded web image from %s\n", image.url.c_str());
+                continue;
+            }
+            // FAT does not rename over an existing file.
+            std::filesystem::remove(target, error);
+            std::filesystem::rename(part, target, error);
+            if (error) std::filesystem::remove(part, error);
         }
     }
 

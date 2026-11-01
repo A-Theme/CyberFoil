@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <pu/ui/ui_Layout.hpp>
@@ -13,6 +14,17 @@ namespace inst::theme {
     };
     std::vector<Choice> Discover(const std::string& appDir);
     void Load(const std::string& appDir, const std::string& selectedFile = "theme.json");
+    // Web images named under "remote_images" (see util/theme_remote.hpp).
+    struct RemoteDownload {
+        std::string url;
+        std::string path;   // where the next launch looks for it
+    };
+    // The loaded theme's web images. Copy taken on the UI thread, then handed
+    // to a worker - the worker never reads theme state.
+    std::vector<RemoteDownload> RemoteImages();
+    // Fetch a fresh copy of each for the NEXT launch. Blocking; run it on a
+    // worker. Checks `stop` between images, and each download is time-limited.
+    void RefreshRemoteImages(const std::vector<RemoteDownload>& images, const std::atomic<bool>& stop);
     std::string Name();
     bool HasColor(const std::string& role);
     pu::ui::Color Color(const std::string& role, pu::ui::Color fallback);

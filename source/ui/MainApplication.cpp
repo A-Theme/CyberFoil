@@ -133,11 +133,35 @@ namespace inst::ui {
         }
     }
 
+    MainApplication::~MainApplication() {
+        this->StopThemeRefresh();
+    }
+
+    void MainApplication::StartThemeRefresh() {
+        this->StopThemeRefresh();
+        auto images = inst::theme::RemoteImages();
+        if (images.empty()) return;
+        // The same offline test main() uses before its own network threads:
+        // without it every launch would sit out the download timeouts.
+        if (inst::util::getIPAddress() == "1.0.0.127") return;
+        this->themeRefreshStop.store(false);
+        this->themeRefreshThread = std::thread([this, images = std::move(images)]() {
+            inst::theme::RefreshRemoteImages(images, this->themeRefreshStop);
+        });
+    }
+
+    void MainApplication::StopThemeRefresh() {
+        this->themeRefreshStop.store(true);
+        // Waits out at most the download in flight (remote::kDownloadTimeoutMs).
+        if (this->themeRefreshThread.joinable()) this->themeRefreshThread.join();
+    }
+
     void MainApplication::Close() {
         if (IsInstallWorkActive()) {
             instPage::requestInstallCancel();
             return; // Renderer and services must outlive the installation worker.
         }
+        this->StopThemeRefresh();
         if (this->optionspage)
             this->optionspage->stopDiscoveryWorker();
         if (this->remoteinstPage)
@@ -255,7 +279,9 @@ namespace inst::ui {
         if (this->themeReloadStage == 0) {
             if (this->optionspage) this->optionspage->stopDiscoveryWorker();
             if (this->remoteinstPage) this->remoteinstPage->stopIconDownloadWorker();
+            this->StopThemeRefresh();
             inst::theme::Load(inst::config::appDir, inst::config::themeFile);
+            this->StartThemeRefresh();
         } else if (this->themeReloadStage <= 8) {
             // Create one layout per frame so the spinner can animate between stages.
             this->CreateLayoutStep(this->themeReloadStage - 1);
@@ -278,6 +304,7 @@ namespace inst::ui {
 
         Language::Load();
         inst::theme::Load(inst::config::appDir, inst::config::themeFile);
+        this->StartThemeRefresh();
 
         this->RecreateLayouts();
         this->LoadLayout(this->mainPage);
