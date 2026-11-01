@@ -2,6 +2,7 @@
 #include <pu/Plutonium>
 #include <switch.h>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 #include "util/ui_dispatcher.hpp"
@@ -60,8 +61,14 @@ namespace inst::ui {
             // every theme load; stopped before the next one and on exit.
             std::thread themeRefreshThread;
             std::atomic<bool> themeRefreshStop{false};
+            std::atomic<bool> themeRefreshDone{true};
+            // "Applying theme..." holds until a theme's first web downloads land,
+            // or this deadline passes, so a newly picked theme opens with them.
+            bool themeAwaitDownloads = false;
+            std::chrono::steady_clock::time_point themeAwaitDeadline;
             void StartThemeRefresh();
             void StopThemeRefresh();
+            void ReapplyBackgrounds();
             AppletFocusState lastFocusState = AppletFocusState_InFocus;
     };
 }

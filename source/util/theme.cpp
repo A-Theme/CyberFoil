@@ -18,7 +18,8 @@ namespace inst::theme {
         std::unordered_map<std::string, std::string> g_images;
         std::string g_name = "Default";
         bool g_noBackgroundImage = false;
-        std::vector<RemoteDownload> g_remote;   // what RefreshRemoteImages fetches for next launch
+        std::vector<RemoteDownload> g_remote;   // what RefreshRemoteImages fetches
+        unsigned g_generation = 0;
 
         bool ValidManifestPath(const std::string& file) {
             if (file.empty() || file.find(':') != std::string::npos || file.find('\\') != std::string::npos) return false;
@@ -62,11 +63,16 @@ namespace inst::theme {
             return true;
         }
 
+        std::string ValidImageFile(const std::filesystem::path& full);
+
         std::string ValidImage(const std::filesystem::path& directory, const std::string& relative) {
             const std::filesystem::path path(relative);
             if (relative.empty() || relative.find(':') != std::string::npos || relative.find('\\') != std::string::npos || path.is_absolute()) return {};
             for (const auto& part : path) if (part == "..") return {};
-            const auto full = directory / path;
+            return ValidImageFile(directory / path);
+        }
+
+        std::string ValidImageFile(const std::filesystem::path& full) {
             std::error_code error;
             const auto size = std::filesystem::file_size(full, error);
             if (error || size == 0 || size > 16ULL * 1024 * 1024) return {};
@@ -119,6 +125,7 @@ namespace inst::theme {
         g_colors.clear();
         g_images.clear();
         g_remote.clear();
+        ++g_generation;
         g_name = "Default";
         g_noBackgroundImage = false;
         if (!ValidManifestPath(selectedFile)) return;
@@ -159,7 +166,7 @@ namespace inst::theme {
                     g_images[remote.key] = cached;
                     if (remote.key == "background.jpg") g_noBackgroundImage = false;
                 }
-                g_remote.push_back({remote.url, (directory / remote.cache).string()});
+                g_remote.push_back({remote.key, remote.url, (directory / remote.cache).string(), !cached.empty()});
             }
             g_name = ManifestName(root, manifest.stem().string());
         } catch (...) {
@@ -173,10 +180,32 @@ namespace inst::theme {
     }
 
     std::vector<RemoteDownload> RemoteImages() { return g_remote; }
+    unsigned Generation() { return g_generation; }
 
-    void RefreshRemoteImages(const std::vector<RemoteDownload>& images, const std::atomic<bool>& stop) {
+    bool AdoptDownloaded(unsigned generation, const std::vector<RemoteDownload>& images) {
+        if (generation != g_generation) return false;
+        bool changed = false;
         for (const auto& image : images) {
-            if (stop.load()) return;
+            if (image.cached) continue;
+            const auto valid = ValidImageFile(image.path);
+            if (valid.empty()) continue;
+            g_images[image.key] = valid;
+            if (image.key == "background.jpg") g_noBackgroundImage = false;
+            changed = true;
+        }
+        return changed;
+    }
+
+    bool BackgroundAdopted(const std::vector<RemoteDownload>& images) {
+        for (const auto& image : images)
+            if (!image.cached && image.key == "background.jpg") return true;
+        return false;
+    }
+
+    std::vector<RemoteDownload> RefreshRemoteImages(const std::vector<RemoteDownload>& images, const std::atomic<bool>& stop) {
+        std::vector<RemoteDownload> arrived;
+        for (const auto& image : images) {
+            if (stop.load()) break;
             std::error_code error;
             const std::filesystem::path target(image.path);
             std::filesystem::create_directories(target.parent_path(), error);
@@ -202,7 +231,9 @@ namespace inst::theme {
             std::filesystem::remove(target, error);
             std::filesystem::rename(part, target, error);
             if (error) std::filesystem::remove(part, error);
+            else arrived.push_back(image);
         }
+        return arrived;
     }
 
     std::string Name() { return g_name; }
